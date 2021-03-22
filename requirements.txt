@@ -1,0 +1,8 @@
+django==3.1.7
+django-bootstrap-form==3.4
+django-tables2==2.3.4
+django-huey-monitor==0.3.0
+-e git://github.com/E-ARK-Software/eatb.git#egg=eatb
+huey==2.3.1
+lxml==4.6.2
+requests==2.25.1

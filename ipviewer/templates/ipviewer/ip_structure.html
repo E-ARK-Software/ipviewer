@@ -1,0 +1,91 @@
+{% extends "ipviewer/base.html" %}
+{% load dictionary_extras %}
+{% load static %}
+{% load i18n %}
+{% block extra_head %}
+    <link href="{% static 'ipviewer/bstreeview/bstreeview.min.css' %}" rel="stylesheet">
+
+	<style>
+		.tab-content {
+			border-left: 1px solid #ddd;
+			border-right: 1px solid #ddd;
+			border-bottom: 1px solid #ddd;
+			padding: 40px;
+		}
+
+		.nav-tabs {
+		font-weight: bold;
+			margin-bottom: 0;
+		}
+	</style>
+{% endblock %}
+
+{% block content %}
+
+<h1 class="main">Information Package Structure</h1>
+
+{% if selected_ip %}
+
+<p class="emph">Information package: {{ selected_ip.information_package }}</p>
+
+<!-- Nav tabs -->
+<ul class="nav nav-tabs">
+  <li class="nav-item">
+    <a class="nav-link{% if tab == '1' %} active{% endif %}" data-toggle="tab" href="#logical-view-tab">Logical view</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link{% if tab == '2' %} active{% endif %}" data-toggle="tab" href="#physical-view-tab">Physical view</a>
+  </li>
+
+</ul>
+
+<script type="text/javascript" src="{% static 'ipviewer/bstreeview/bstreeview.min.js' %}"></script>
+
+
+<div class="tab-content">
+   <div class="tab-pane container{% if tab == '1' %} active{% else %} fade{% endif %}" id="logical-view-tab">
+	  <div id="logical-view">
+	  </div>
+	  <script>
+			$(function () {
+				$('#logical-view').bstreeview({
+					data: eval({{ logical_view_data | safe }}),
+					expandIcon: 'fa fa-angle-down fa-fw',
+					collapseIcon: 'fa fa-angle-right fa-fw',
+					indent: 1.25,
+					parentsMarginLeft: '1.25rem',
+					openNodeLinkOnNewTab: true
+				});
+			});
+		</script>
+  </div>
+
+  <div class="tab-pane container{% if tab == '2' %} active{% else %} fade{% endif %}" id="physical-view-tab">
+		<div id="physical-view">
+		</div>
+		<script>
+			$(function () {
+				$('#physical-view').bstreeview({
+					data: eval({{ physical_view_data | safe }}),
+					expandIcon: 'fa fa-angle-down fa-fw',
+					collapseIcon: 'fa fa-angle-right fa-fw',
+					indent: 1.25,
+					parentsMarginLeft: '1.25rem',
+					openNodeLinkOnNewTab: true
+				});
+			});
+		</script>
+  </div>
+
+</div>
+
+{% else %}
+
+<p class="emph">No information package selected.</p>
+<p>Please <a href="{% url 'input_data' 2 %}">{% trans 'select an information package' %} first.</a></p>
+
+{% endif %}
+
+
+
+{% endblock %}

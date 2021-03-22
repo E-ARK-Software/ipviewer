@@ -1,0 +1,52 @@
+{% load static i18n %}
+
+{% if user.is_authenticated %}
+
+
+{% if request.user.is_superuser or request.user.is_staff  %}
+<li id="administration" class="nav-item dropdown">
+<a class="nav-link dropdown-toggle" href="#" id="navbarDropdown1" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+  <i aria-hidden="true" class="fas fa-tools"></i>  {% trans 'Administration' %}
+</a>
+<div class="dropdown-menu" aria-labelledby="navbarDropdown1">
+  {% if request.user.is_superuser or request.user.is_staff  %}
+    {% if request.user.is_superuser %}
+    <a class="dropdown-item" href="/ipviewer/admin">{% trans 'Django Administration' %}</a>
+    {% endif %}
+  {% endif %}
+</div>
+</li>
+{% endif %}
+
+<li id="input-data" class="nav-item dropdown pointer text-nowrap">
+  <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown3" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+   <i aria-hidden="true" class="fas fa-upload"></i>  {% trans 'Input data' %}
+  </a>
+  <div class="dropdown-menu" aria-labelledby="navbarDropdown3">
+    <a class="dropdown-item" href="{% url 'input_data' 1 %}">{% trans 'Upload input data' %}</a>
+    <a class="dropdown-item" href="{% url 'input_data' 2 %}">{% trans 'Select information package' %}</a>
+  </div>
+</li>
+
+
+<li id="package-structure" class="nav-item dropdown pointer text-nowrap">
+  <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown4" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+   <i aria-hidden="true" class="fas fa-boxes"></i>  {% trans 'Package structure' %}
+  </a>
+  <div class="dropdown-menu" aria-labelledby="navbarDropdown4">
+    <a class="dropdown-item" href="{% url 'ip_structure' 1  %}">{% trans 'Logical view' %}</a>
+    <a class="dropdown-item" href="{% url 'ip_structure' 2 %}">{% trans 'Physical view' %}</a>
+  </div>
+</li>
+
+<li id="representations" class="nav-item dropdown pointer text-nowrap">
+  <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown5" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+   <i aria-hidden="true" class="fas fa-project-diagram"></i>  {% trans 'Representations' %}
+  </a>
+  <div class="dropdown-menu" aria-labelledby="navbarDropdown5">
+    <a class="dropdown-item" href="{% url 'representations' 1 %}">{% trans 'Timeline view' %}</a>
+    <a class="dropdown-item" href="{% url 'representations' 2 %}">{% trans 'Dependency view' %}</a>
+  </div>
+</li>
+
+{% endif %}

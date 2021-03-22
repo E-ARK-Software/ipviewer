@@ -1,0 +1,172 @@
+{% extends "ipviewer/base.html" %}
+{% load dictionary_extras %}
+{% load static %}
+{% load i18n %}
+{% block extra_head %}
+
+	<style>
+    .tab-content {
+        border-left: 1px solid #ddd;
+        border-right: 1px solid #ddd;
+        border-bottom: 1px solid #ddd;
+        padding: 40px;
+    }
+
+    .nav-tabs {
+    font-weight: bold;
+        margin-bottom: 0;
+    }
+
+    div#entity-relationships {
+        border-color:#CCCCCC;
+    }
+    .vis-item.vis-box, .vis-item.vis-dot {
+      background-color: #c8414b;
+      color: #ffffff;
+    }
+	</style>
+
+  <script type="text/javascript" src="{% static 'ipviewer/moment/moment-with-locales.min.js' %}"></script>
+
+{% endblock %}
+
+{% block content %}
+
+<h1 class="main">Representations</h1>
+
+{% if selected_ip %}
+
+<p style="font-weight:bold">Information package: {{ selected_ip.information_package }}</p>
+
+<!-- Nav tabs -->
+<ul class="nav nav-tabs">
+  <li class="nav-item">
+    <a class="nav-link{% if tab == '1' %} active{% endif %}" data-toggle="tab" href="#tab1">Timeline view</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link{% if tab == '2' %} active{% endif %}" data-toggle="tab" href="#tab2">Dependency view</a>
+  </li>
+
+</ul>
+
+<script type="text/javascript" src="{% static 'ipviewer/bstreeview/bstreeview.min.js' %}"></script>
+
+
+<div class="tab-content">
+  <div class="tab-pane container{% if tab == '1' %} active{% else %} fade{% endif %}" id="tab1">
+    <link
+      href="{% static 'ipviewer/vis.js/vis-timeline-graph2d.min.css' %}"
+      rel="stylesheet"
+      type="text/css"
+    />
+    <script
+      type="text/javascript"
+      src="{% static 'ipviewer/vis.js/vis-timeline-graph2d.min.js' %}"
+    ></script>
+
+    <div id="visualization"></div>
+
+    <script type="text/javascript">
+      // DOM element where the Timeline will be attached
+      var container = document.getElementById("visualization");
+
+      // Create a DataSet (allows two way data-binding)
+      var timeline_data = `{{ version_timeline_data | safe }}`;
+      var items = new vis.DataSet(eval(timeline_data));
+
+      // Configuration for the Timeline
+      var options = {};
+
+      // Create a Timeline
+      var timeline = new vis.Timeline(container, items, options);
+      timeline.setWindow(moment(new Date("{{ min_dt }}")).subtract({{ scale_value }}, '{{ scale_unit }}'), moment(new Date("{{ max_dt }}")).add({{ scale_value }}, '{{ scale_unit }}'));
+      var halfDiff = ( new Date("{{ max_dt }}") - new Date("{{ min_dt }}") ) / 2;
+      var middleDate = new Date(moment(new Date("{{ min_dt }}")).add(halfDiff, "milliseconds"))
+      timeline.moveTo(middleDate);
+
+    </script>
+
+
+  </div>
+  <div class="tab-pane container{% if tab == '2' %} active{% else %} fade{% endif %}" id="tab2">
+
+    <script type="text/javascript" src="{% static 'ipviewer/vis.js/vis-network.js' %}"></script>
+    <link href="{% static 'ipviewer/vis.js/vis-network.min.css' %}" rel="stylesheet" type="text/css" />
+    <script>
+
+    var updateRelationshipGraphFunc = function(obj, hide_form = true) {
+      var text = $('textarea#textinput').val();
+      $.ajax({
+          url: '/ipviewer/rep-dep-graph',
+          type: "POST",
+          beforeSend: function(xhr){xhr.setRequestHeader('Accept', 'text/html'); xhr.setRequestHeader('Content-Type', 'text/plain');},
+          dataType: 'text',
+          data: text,
+      }).done(function(response){
+          var container = document.getElementById('entity-relationships');
+          var graph=JSON.parse(response);
+          var nodes = new vis.DataSet(graph.nodes);
+          var edges = new vis.DataSet(graph.edges);
+          var data = {
+            nodes: nodes,
+            edges: edges,
+          };
+          var options = {
+              width: ($(document).width()-600).toString(),
+              height: ($(document).height()-500).toString(),
+               nodes:{
+                  color: '#C8414B',
+                  fixed: false,
+                  font: '13px arial white',
+                  scaling: {
+                    label: true
+                  },
+                  shadow: true
+                },
+                "physics": {
+                "forceAtlas2Based": {
+                    "gravitationalConstant": -138,
+                    "centralGravity": 0.02,
+                    "springLength": 100
+                  },
+                  "minVelocity": 0.75,
+                  "solver": "forceAtlas2Based",
+                }
+              };
+          var network = new vis.Network(container, data, options);
+          network.fit();
+          $("#entity-relationships").show();
+          if(hide_form)
+              $( "#annotated-entity-text" ).show();
+          if(hide_form)
+              $("#getentrels").hide();
+      }).fail(function (xhr, ajaxOptions, thrownError) {
+          console.log("Error retrieving dependencies");
+      });
+    }
+
+    $( document ).ready(function() {
+        updateRelationshipGraphFunc(null, hide_form = false);
+    });
+    </script>
+
+    <h3>Dependencies</h3>
+    <div id="entity-relationships" style="border: 1px solid gray"></div>
+
+  </div>
+</div>
+
+{% else %}
+
+<p class="emph">No information package selected.</p>
+<p>Please <a href="{% url 'input_data' 2 %}">{% trans 'select an information package' %} first.</a></p>
+
+{% endif %}
+
+
+{% endblock %}
+
+
+
+
+

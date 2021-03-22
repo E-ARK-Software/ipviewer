@@ -1,0 +1,134 @@
+{% load static i18n %}
+{% get_current_language as LANGUAGE_CODE %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+   <meta charset="UTF-8"/>
+    <title>{{app_label}}</title>
+    <link rel="icon" href="{% static 'ipviewer/img/favicon.ico' %}">
+
+    <script src="https://code.jquery.com/jquery-3.4.1.min.js"
+			integrity="sha256-CSXorXvZcTkaix6Yvo6HppcZGetbYMGWSFlBw8HfCJo=" crossorigin="anonymous"></script>
+
+
+	<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js"
+			integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6"
+			crossorigin="anonymous"></script>
+
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css" rel="stylesheet"
+		integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+	<link href="https://stackpath.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet"
+		integrity="sha384-wvfXpqpZZVQGK6TAh5PVlGOfQNHSoD2xbE+QkPxCAFlNEevoEH3Sl0sibVcOQVnN" crossorigin="anonymous">
+
+
+    <link rel="stylesheet" type="text/css" href="{% static 'ipviewer/fontawesome-5.12.1/css/all.min.css' %}">
+    <link rel="stylesheet" href="{% static 'ipviewer/bootstrap_custom.css' %}" type="text/css" />
+    <link rel="stylesheet" href="{% static 'ipviewer/base.css' %}" type="text/css" />
+    <script type="text/javascript" src="{% static 'ipviewer/base.js' %}"></script>
+
+    <link rel="stylesheet" href="{% static 'ipviewer/glyphicons/glyphicons.css' %}" type="text/css" />
+
+    <link rel="stylesheet" media="screen" href="{% static 'ipviewer/global.css' %}">
+
+
+
+    {% block extra_head %}{% endblock %}
+
+</head>
+
+<body>
+
+
+         <header>
+	      <nav class="navbar navbar-expand-lg navbar-dark bg-primary navbar-fixed-top">
+
+              <div class="jh-logo-container float-left">
+                  <a aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation" class="navbar-toggler float-right" data-target="#navbarResponsive" data-toggle="collapse" href="javascript:void(0);">
+                      <i class="fa fa-bars"></i> </a> <a class="navbar-brand logo float-left" href="#/">
+                  <span class="navbar-title">
+                      <span><img src="data:image/png;base64,{{ logo }}" style="padding-bottom:7px; padding-right:8px"> <i>{{app_label}}</i></span></span>
+                  <span class="navbar-title" style="color:red"></span>
+                  </a>
+              </div>
+
+              <div class="navbar-collapse collapse" id="navbarResponsive">
+                  <ul class="navbar-nav ml-auto">
+
+                    {% include "ipviewer/navbar.html" %}
+
+                 <li class="nav-item dropdown pointer text-nowrap">
+	              <a style="margin-top: 3px" class="nav-link dropdown-toggle" href="#" id="language" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+	                <i aria-hidden="true" class="fa fa-flag"></i> {% trans 'Language' %}
+	              </a>
+	              <div class="dropdown-menu dropdown-menu-right">
+
+                    {% get_available_languages as languages %}
+                    {% for lang_code, lang_name in languages %}
+
+                    <a href="{% url 'activate_language' lang_code %}" class="dropdown-item">
+                      {% if lang_code == LANGUAGE_CODE %}
+                        <i class="glyphicon glyphicon-check"></i>&nbsp;&nbsp;
+                      {% else %}
+                        <i class="glyphicon glyphicon-unchecked"></i>&nbsp;&nbsp;
+                      {% endif %}
+                      {{ lang_name }} ({{ lang_code }})
+                    </a>
+
+                    {% endfor %}
+                  </div>
+	            </li>
+
+                <li class="nav-item dropdown pointer text-nowrap">
+
+                  {% if user.is_authenticated %}
+
+                  <a style="margin-top: 3px" class="nav-link dropdown-toggle" href="#" id="access1" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    <img alt="Avatar" class="profile-image img-circle" src="{% static 'ipviewer/img/user_woman.png' %}" width="30" height="30"></span>
+                    {{ user.get_username }}
+                  </a>
+                  <div class="dropdown-menu" aria-labelledby="navbarDropdown">
+                    <i aria-hidden="true" class="fa sign-out-alt"></i>
+                        <a href="/ipviewer/accounts/logout">{% trans 'log out' %}</a>
+                  </div>
+                  {% else %}
+
+                  <a style="margin-top: 3px" class="nav-link dropdown-toggle" href="#" id="access2" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    {% trans 'Login' %}
+                  </a>
+                  <div class="dropdown-menu" aria-labelledby="navbarDropdown">
+                    <i class="fas fa-sign-in-alt"></i>
+                        <a href="/ipviewer/accounts/login">{% trans 'log in' %}</a>
+                  </div>
+
+                  {% endif %}
+
+                </li>
+	          </ul>
+
+              </div>
+          </nav>
+      </header>
+
+
+
+    <div class="container-fluid">
+          <div class="card jh-card mb-auto">
+                  <div class="content">
+                      {% block content %}{% endblock %}
+                  </div>
+          </div>
+          <div class="mt-1">
+                  <div class="footer">
+                      <span>
+                          <a>Version {{ sw_version }} ({{ sw_version_date }})</a>
+                      </span>
+                  </div>
+          </div>
+      </div>
+
+</body>
+
+
+{% block after_body %}{% endblock %}
+</html>
