@@ -16,10 +16,12 @@ def environment_variables(request):
     lang = request.META['HTTP_ACCEPT_LANGUAGE'][0:2] if 'HTTP_ACCEPT_LANGUAGE' in request.META else "en"
     if translation.LANGUAGE_SESSION_KEY in request.session:
         lang = request.session[translation.LANGUAGE_SESSION_KEY]
-
-    u = User.objects.get(id=request.user.id)
-    ips = DetectedInformationPackage.objects.filter(user=u, selected=True)  # noqa
-    selected_ip = ips[0] if len(ips) > 0 else None
+    if request.user.id:
+        u = User.objects.get(id=request.user.id)
+        ips = DetectedInformationPackage.objects.filter(user=u, selected=True)  # noqa
+        selected_ip = ips[0] if len(ips) > 0 else None
+    else:
+        selected_ip = None
 
     return {
         'logo': logo,

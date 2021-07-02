@@ -16,58 +16,120 @@ from django.conf import settings
 from django_tables2 import RequestConfig, A
 import django_tables2 as tables
 
-from eatb.utils.datetime import DT_ISO_FORMAT, get_date_from_iso_str
+from eatb.utils.datetime import DT_ISO_FORMAT, DT_ISO_FMT_SEC_PREC, get_date_from_iso_str
 from eatb.utils.fileutils import list_files_in_dir
 
 from django.http import HttpResponseNotFound, HttpResponseBadRequest, HttpResponseForbidden, FileResponse, HttpResponse
 from eatb.utils.fileutils import fsize, get_mime_type, read_file_content
 
-from config.configuration import config_max_http_download, file_size_limit, django_service_ulr, task_logfile_name
+from config.configuration import config_max_http_download, file_size_limit, django_service_ulr, task_logfile_name, \
+    mets_entry_pattern, extracted_schemas_directory, ead_entry_pattern
 from config.configuration import ip_data_path
+from ipviewer.context_processors import environment_variables
 from ipviewer.models import DetectedInformationPackage
 from ipviewer.tasks import validate_and_detect_ips
 from django.utils.translation import ugettext_lazy as _
-
+import tarfile
+import re
+import lxml.etree as ET
+from ipviewer.util import read_textfile_from_tar
+from mimetypes import MimeTypes
+# , get_schema_location_by_regex, get_schema_locations, extract_container_entries
 logger = logging.getLogger(__name__)
 
 
-def get_ip_overview_context():
-    # TODO: read information about information package and representations from METS/EAD/DC
-    total_size = "56MB"
-    total_number_content_files = 16
-    content_mime_types = ["text/pdf", "text/msword"]
-    return {
-        "object_id": "urn:uuid:d0bbd07c-74a0-4c0d-9bc8-37d503f705bd",
-        "title": "testing.test.202007301809",
-        "representations": [
-            {
-                "identifier": "word",
-                "label": "MS Word",
-                "description": "PDF representation (original submission)",
-            },
-            {
-                "identifier": "pdf",
-                "label": "PDF",
-                "description": "PDF representation (migration on ingest)",
-            },
-            {
-                "identifier": "pdfa",
-                "label": "PDF/A",
-                "description": "PDF/A representation (migration action)",
-            }
-        ],
-        "stats": {
-            "total_size": total_size,
-            "total_number_content_files": total_number_content_files,
-            "content_mime_types": ", ".join(content_mime_types),
-        }
-    }
+def get_representation_label_for_id(root_mets, id):
+    for root_structMap in root_mets.iter('{http://www.loc.gov/METS/}structMap'):
+        if root_structMap.get('TYPE') == 'PHYSICAL':
+            print(root_structMap)
+            for div in root_structMap.iter('{http://www.loc.gov/METS/}div'):
+                if div.get('ID') == id:
+                    return div.get('LABEL')
+    return None
+
+def get_ip_overview_context(request):
+    user_data_path = os.path.join(ip_data_path, request.user.username)
+    vars = environment_variables(request)
+    if not vars['selected_ip']:
+        return {}
+    object_path = os.path.join(user_data_path, vars['selected_ip'].ip_filename)
+    t = tarfile.open(object_path, 'r')
+    mets_info_entries = [member for member in t.getmembers() if re.match(mets_entry_pattern, member.name)]
+    if len(mets_info_entries) == 1:
+        logger.info("Root METS file found in container file")
+        root_mets_file_entry = mets_info_entries[0].name
+        root_mets_file_entry_base_dir = os.path.dirname(root_mets_file_entry)
+        root_mets_content = read_textfile_from_tar(t, root_mets_file_entry)
+        root_mets = ET.fromstring(bytes(root_mets_content, 'utf-8'))
+
+        #print(root_mets.attrib['OBJID'])
+        # for child in parsed_mets:
+        #    print(child.tag, child.attrib)
+        # for neighbor in parsed_mets.iter('neighbor'):
+        #    print(neighbor.attrib)
+
+        overview = {}
+        total_size = 0
+        total_number_content_files = 16
+        content_mime_types = []
+        representations = []
+        overview['object_id'] = root_mets.attrib['OBJID']
+
+        ead_info_entries = [member for member in t.getmembers() if re.match(ead_entry_pattern, member.name)]
+        if len(ead_info_entries) == 1:
+            logger.info("EAD file found in container file")
+            root_ead_file_entry = ead_info_entries[0].name
+            root_ead_file_entry_base_dir = os.path.dirname(root_ead_file_entry)
+            root_ead_content = read_textfile_from_tar(t, root_ead_file_entry)
+            root_ead = ET.fromstring(bytes(root_ead_content, 'utf-8'))
+
+            found = [element.text for element in root_ead.iter('{http://ead3.archivists.org/schema/}titleproper')]
+            #TODO: test for empty
+            overview['title'] = found[0]
+        else:
+            overview['title'] = "Unknown. EAD file missing."
+
+        for root_fileGrp in root_mets.iter('{http://www.loc.gov/METS/}fileGrp'):
+            if root_fileGrp.attrib['USE'] == 'representations':
+                print(root_fileGrp.tag, root_fileGrp.attrib)
+                for root_file in root_fileGrp.iter('{http://www.loc.gov/METS/}file'):
+                    FLocat = root_file.find('{http://www.loc.gov/METS/}FLocat')
+                    rep_mets_file_entry = FLocat.get("{http://www.w3.org/1999/xlink}href")
+                    rep_mets_file_entry = root_mets_file_entry_base_dir + rep_mets_file_entry.strip('.')
+                    rep_mets_content = read_textfile_from_tar(t, rep_mets_file_entry)
+                    rep_mets = ET.fromstring(bytes(rep_mets_content, 'utf-8'))
+                    representation = {}
+                    representation['identifier'] = rep_mets.get('OBJID')
+                    print(rep_mets)
+                    for rep_fileGrp in rep_mets.iter('{http://www.loc.gov/METS/}fileGrp'):
+                        print(rep_fileGrp.tag, rep_fileGrp.attrib)
+                        for rep_file in rep_fileGrp.iter('{http://www.loc.gov/METS/}file'):
+                            mimetype = rep_file.get('MIMETYPE')
+                            #print(mimetype)
+                            #mime = MimeTypes()
+                            #file_mimetype, _ = mime.guess_type(file_url)
+                            representation['label'] = get_representation_label_for_id(root_mets,
+                                                                                      root_file.get('ID'))
+                            #representation['description'] = "From Where???"
+                            content_mime_types.append(rep_file.get('MIMETYPE'))
+                            total_size += int(rep_file.get('SIZE'))
+                            total_number_content_files +=1
+                    representations.append(representation)
+        overview['representations'] = representations
+        overview['stats'] = {
+                   "total_size": total_size,
+                   "total_number_content_files": total_number_content_files,
+                   "content_mime_types": ", ".join(list(set(content_mime_types))),
+               }
+    return overview
 
 
 @login_required
 def ip_overview(request):
     template = loader.get_template('ipviewer/ip_overview.html')
-    return HttpResponse(template.render(context=get_ip_overview_context(), request=request))
+    ip_overview = get_ip_overview_context(request)
+    request.session['overview'] = ip_overview
+    return HttpResponse(template.render(context=ip_overview, request=request))
 
 
 class InformationPackageDetail(DetailView):
@@ -84,102 +146,194 @@ class InformationPackageDetail(DetailView):
 
     def get_context_data(self, **kwargs):
         context = super(InformationPackageDetail, self).get_context_data(**kwargs)
-        # reset selection bevore the new selection is set
+        # reset selection before the new selection is set
         DetectedInformationPackage.objects.all().update(selected=False)  # noqa
-        context.update(get_ip_overview_context())
         # register selected ip
         ip = context['object']
         ip.selected = True
         ip.save()
+        ip_overview = get_ip_overview_context(self.request)
+        context.update(ip_overview)
+        #self.request.session['overview'] = ip_overview
         return context
 
+
+def fileSec_get_file_for_id(fileSec, id):
+    for file in fileSec.iter('{http://www.loc.gov/METS/}file'):
+        if file.get('ID') == id:
+            FLocat = file.find('{http://www.loc.gov/METS/}FLocat')
+            fname = FLocat.get("{http://www.w3.org/1999/xlink}href")
+            return fname
+    #TODO: logg
+    return None
+
+def mdSec_get_file_for_id(mdSec, id):
+    for mdRef in mdSec.iter('{http://www.loc.gov/METS/}mdRef'):
+        if mdRef.get('ID') == id:
+            fname = mdRef.get("{http://www.w3.org/1999/xlink}href")
+            return fname
+    #TODO: logg
+    return None
+
+
+def get_schemas_section(div, root_mets):
+    fileSec = next(root_mets.iter('{http://www.loc.gov/METS/}fileSec'))
+    label = div.get('LABEL')
+    node = { "text": label,
+             "icon": "fa fa-inbox fa-fw",
+             "nodes": [] }
+    for fptr in div.iter('{http://www.loc.gov/METS/}fptr'):
+        name = fileSec_get_file_for_id(fileSec, fptr.get('FILEID'))
+        file_node = { "icon": "fa fa-file fa-fw",
+                      "text": name,
+                    }
+        node['nodes'].append(file_node)
+    return node
+
+def get_data_section(div, root_mets):
+    fileSec = next(root_mets.iter('{http://www.loc.gov/METS/}fileSec'))
+    label = div.get('LABEL')
+    node = { "text": label,
+             "icon": "fa fa-inbox fa-fw",
+             "nodes": [] }
+    for fptr in div.iter('{http://www.loc.gov/METS/}fptr'):
+        name = fileSec_get_file_for_id(fileSec, fptr.get('FILEID'))
+        file_node = { "icon": "fa fa-file fa-fw",
+                      "text": name,
+                    }
+        node['nodes'].append(file_node)
+    return node
+
+
+def get_metadata_section(div, root_mets):
+    sections = [section for section in root_mets.iter('{http://www.loc.gov/METS/}dmdSec')]
+    sections += [section for section in root_mets.iter('{http://www.loc.gov/METS/}amdSec')]
+    #amdSec = next(root_mets.iter('{http://www.loc.gov/METS/}amdSec'))
+    #dmdSec = next(root_mets.iter('{http://www.loc.gov/METS/}dmdSec'))
+    label = div.get('LABEL')
+    node = { "text": label,
+             "icon": "fa fa-inbox fa-fw",
+             "nodes": [] }
+    for fptr in div.iter('{http://www.loc.gov/METS/}fptr'):
+        for section in sections:
+            name = mdSec_get_file_for_id(section, fptr.get('FILEID'))
+            if name:
+                if name.endswith('premis.xml'):
+                    print("Found premis")
+                file_node = {"icon": "fa fa-file fa-fw",
+                             "text": name,
+                             }
+                node['nodes'].append(file_node)
+                break
+    return node
+
+def get_representation_section(div, root_mets, t, root_mets_file_entry_base_dir):
+    fileSec = next(root_mets.iter('{http://www.loc.gov/METS/}fileSec'))
+    label = div.get('LABEL')
+    rep_node = {}
+    for fptr in div.iter('{http://www.loc.gov/METS/}fptr'):
+        file_name = fileSec_get_file_for_id(fileSec, fptr.get('FILEID'))
+        if file_name.endswith('METS.xml'):
+            rep_mets_file_entry = root_mets_file_entry_base_dir + file_name.strip('.')
+            rep_mets_content = read_textfile_from_tar(t, rep_mets_file_entry)
+            rep_mets = ET.fromstring(bytes(rep_mets_content, 'utf-8'))
+            representation = {}
+            rep_node = {"icon": "fa fa-ibox fa-fw",
+                         "text": rep_mets.get('OBJID'),
+                         "nodes": []
+                         }
+            for rep_structMap in rep_mets.iter('{http://www.loc.gov/METS/}structMap'):
+                if rep_structMap.get('TYPE') == 'PHYSICAL':
+                    for div in rep_structMap.find('{http://www.loc.gov/METS/}div'):
+                        label = div.get('LABEL')
+                        if label == 'data':
+                            data = get_data_section(div, rep_mets)
+                            rep_node['nodes'].append(data)
+                            continue
+                        if label == 'schemas':
+                            schemas = get_schemas_section(div, rep_mets)
+                            rep_node['nodes'].append(schemas)
+                            continue
+                        if label == 'metadata':
+                            metadata = get_metadata_section(div, rep_mets)
+                            # Read premis and create premis entry
+                            metadata['premis'] = {}
+                            for entry in metadata['nodes']:
+                                if entry['text'].endswith('premis.xml'):
+                                    premis_file_entry = os.path.dirname(rep_mets_file_entry) + entry['text'].strip(".")
+                                    print(premis_file_entry)
+                                    rep_premis_content = read_textfile_from_tar(t, premis_file_entry)
+                                    rep_premis = ET.fromstring(bytes(rep_premis_content, 'utf-8'))
+
+                                    for rep_premis_event in rep_premis.iter('{info:lc/xmlns/premis-v2}event'):
+                                        rep_premis_eventDateTime = rep_premis_event.find('{info:lc/xmlns/premis-v2}eventDateTime')
+                                        rep_premis_eventType = rep_premis_event.find('{info:lc/xmlns/premis-v2}eventType')
+                                        if rep_premis_eventDateTime is not None and rep_premis_eventType is not None:
+                                            rep_node['premis'] = {
+                                                "created": rep_premis_eventDateTime.text,
+                                                "message": rep_premis_eventType.text
+                                            }
+
+                            rep_node['nodes'].append(metadata)
+                            continue
+    return rep_node
 
 @login_required
 def ip_structure(request, tab):
     template = loader.get_template('ipviewer/ip_structure.html')
-    # TODO: logical/physical view data
-    logical_view_data = [
-        {
-            "text": "urn:uuid:46f99745-2f60-4849-9406-d3fe40f67a67",
+    logical_view_data = []
+    user_data_path = os.path.join(ip_data_path, request.user.username)
+    vars = environment_variables(request)
+    if not vars['selected_ip']:
+        return {}
+    object_path = os.path.join(user_data_path, vars['selected_ip'].ip_filename)
+    t = tarfile.open(object_path, 'r')
+
+    mets_info_entries = [member for member in t.getmembers() if re.match(mets_entry_pattern, member.name)]
+    if len(mets_info_entries) == 1:
+        logger.info("Root METS file found in container file")
+        root_mets_file_entry = mets_info_entries[0].name
+        root_mets_file_entry_base_dir = os.path.dirname(root_mets_file_entry)
+        root_mets_content = read_textfile_from_tar(t, root_mets_file_entry)
+        root_mets = ET.fromstring(bytes(root_mets_content, 'utf-8'))
+        # iterate structMap get ids and reference in dmdSec/amdSec/fileSec
+        obj_id = root_mets.attrib['OBJID']
+        logical_view_section = {
+            "text": obj_id,
             "icon": "fa fa-archive fa-fw",
-            "nodes": [
-                {
-                    "text": "rep1",
-                    "icon": "fa fa-inbox fa-fw",
-                    "nodes": [
-                        {
-                            "icon": "fa fa-file-pdf-o fa-fw",
-                            "text": "pdf-file-1"
-                        },
-                        {
-                            "icon": "fa fa-file-pdf-o fa-fw",
-                            "text": "pdf-file-2"
-                        }
-                    ]
-                },
-                {
-                    "text": "rep2",
-                    "icon": "fa fa-inbox fa-fw",
-                    "nodes": [
-                        {
-                            "icon": "fa fa-file-word-o fa-fw",
-                            "text": "ms-word-doc-1"
-                        },
-                        {
-                            "icon": "fa fa-file-word-o fa-fw",
-                            "text": "ms-word-doc-2"
-                        }
-                    ]
-                },
-            ]
+            "nodes": []
         }
-    ]
+        logical_view_data.append(logical_view_section)
+        representations = {"text": "representations",
+                "icon": "fa fa-inbox fa-fw",
+                "nodes": []}
+        for root_structMap in root_mets.iter('{http://www.loc.gov/METS/}structMap'):
+            if root_structMap.get('TYPE') == 'PHYSICAL':
+                for div in root_structMap.find('{http://www.loc.gov/METS/}div'):
+                    label = div.get('LABEL')
+                    if label == 'schemas':
+                        schemas = get_schemas_section(div, root_mets)
+                        logical_view_section['nodes'].append(schemas)
+                        continue
+                    if label == 'metadata':
+                        metadata = get_metadata_section(div, root_mets)
+                        logical_view_section['nodes'].append(metadata)
+                        continue
+
+                    representation = get_representation_section(div, root_mets, t, root_mets_file_entry_base_dir)
+                    representations['nodes'].append(representation)
+        logical_view_section['nodes'].append(representations)
+
     physical_view_data = [
         {
             "text": "Container files",
             "icon": "fa fa-boxes fa-fw",
             "nodes": [
                 {
-                    "text": "ip.avd.001.v01.tar",
+                    "text": vars['selected_ip'].ip_filename,
                     "icon": "fa fa-archive fa-fw",
-                    "nodes": [
-                        {
-                            "icon": "fa fa-inbox fa-fw",
-                            "text": "rep1",
-                            "nodes": [
-                                {
-                                    "icon": "fa fa-file-pdf-o fa-fw",
-                                    "text": "pdf-doc-1"
-                                },
-                                {
-                                    "icon": "fa fa-file-pdf-o fa-fw",
-                                    "text": "pdf-doc-2"
-                                }
-                            ]
-                        }
-                    ]
-                },
-                {
-                    "text": "ip.avd.002.v01.tar",
-                    "icon": "fa fa-archive fa-fw",
-                    "nodes": [
-                        {
-                            "icon": "fa fa-inbox fa-fw",
-                            "text": "rep2",
-                            "nodes": [
-                                {
-                                    "icon": "fa fa-file-word-o fa-fw",
-                                            "text": "ms-word-doc-1"
-                                },
-                                {
-                                    "icon": "fa fa-file-word-o fa-fw",
-                                            "text": "ms-word-doc-2"
-                                }
-                            ]
-                        }
-                    ]
+                    "nodes": logical_view_section['nodes']
                 }
-
             ]
         }
     ]
@@ -213,27 +367,76 @@ def input_data(request, tab):
 @login_required
 def representations(request, tab):
     template = loader.get_template('ipviewer/representations.html')
-    # TODO: read versions from PREMIS file
-    inventory = {
-        "versions": {
-            "00000": {
-                "created": "2021-03-07T20:51:30Z",
-                "message": "Original SIP"
-            },
-            "00001": {
-                "created": "2021-03-07T20:51:33Z",
-                "message": "AIP (original ingest)"
-            },
-            "00002": {
-                "created": "2021-03-08T13:48:58Z",
-                "message": "AIP (original ingest)"
-            },
-            "00003": {
-                "created": "2021-03-08T13:59:33Z",
-                "message": "AIP (update)"
-            }
+    inventory = {"versions": {} }
+    #TODO: Deduplicate code
+    logical_view_data = []
+    user_data_path = os.path.join(ip_data_path, request.user.username)
+    vars = environment_variables(request)
+    if not vars['selected_ip']:
+        return {}
+    object_path = os.path.join(user_data_path, vars['selected_ip'].ip_filename)
+    t = tarfile.open(object_path, 'r')
+
+    mets_info_entries = [member for member in t.getmembers() if re.match(mets_entry_pattern, member.name)]
+    if len(mets_info_entries) == 1:
+        logger.info("Root METS file found in container file")
+        root_mets_file_entry = mets_info_entries[0].name
+        root_mets_file_entry_base_dir = os.path.dirname(root_mets_file_entry)
+        root_mets_content = read_textfile_from_tar(t, root_mets_file_entry)
+        root_mets = ET.fromstring(bytes(root_mets_content, 'utf-8'))
+        # iterate structMap get ids and reference in dmdSec/amdSec/fileSec
+        obj_id = root_mets.attrib['OBJID']
+        logical_view_section = {
+            "text": obj_id,
+            "icon": "fa fa-archive fa-fw",
+            "nodes": []
         }
-    }
+        logical_view_data.append(logical_view_section)
+        representations = {"text": "representations",
+                           "icon": "fa fa-inbox fa-fw",
+                           "nodes": []}
+        version_label = 0;
+        for root_structMap in root_mets.iter('{http://www.loc.gov/METS/}structMap'):
+            if root_structMap.get('TYPE') == 'PHYSICAL':
+                for div in root_structMap.find('{http://www.loc.gov/METS/}div'):
+                    label = div.get('LABEL')
+                    if label == 'schemas':
+                        schemas = get_schemas_section(div, root_mets)
+                        logical_view_section['nodes'].append(schemas)
+                        continue
+                    if label == 'metadata':
+                        metadata = get_metadata_section(div, root_mets)
+                        logical_view_section['nodes'].append(metadata)
+                        continue
+
+                    representation = get_representation_section(div, root_mets, t, root_mets_file_entry_base_dir)
+                    if 'premis' in representation:
+                        inventory['versions'][str(version_label)] = representation['premis']
+                        #TODO: get the version
+                        version_label+=1
+                        representations['nodes'].append(representation)
+        logical_view_section['nodes'].append(representations)
+
+    # inventory = {
+    #     "versions": {
+    #         "00000": {
+    #             "created": "2021-03-07T20:51:30Z",
+    #             "message": "Original SIP"
+    #         },
+    #         "00001": {
+    #             "created": "2021-03-07T20:51:33Z",
+    #             "message": "AIP (original ingest)"
+    #         },
+    #         "00002": {
+    #             "created": "2021-03-08T13:48:58Z",
+    #             "message": "AIP (original ingest)"
+    #         },
+    #         "00003": {
+    #             "created": "2021-03-08T13:59:33Z",
+    #             "message": "AIP (update)"
+    #         }
+    #     }
+    # }
     version_timeline_data = [
         {
             "id": int(key),
@@ -248,8 +451,8 @@ def representations(request, tab):
     if len(times) > 1:
         min_dtstr = times[0]
         max_dtstr = times[len(times) - 1]
-        min_dt = get_date_from_iso_str(min_dtstr, DT_ISO_FORMAT)
-        max_dt = get_date_from_iso_str(max_dtstr, DT_ISO_FORMAT)
+        min_dt = get_date_from_iso_str(min_dtstr, DT_ISO_FMT_SEC_PREC)
+        max_dt = get_date_from_iso_str(max_dtstr, DT_ISO_FMT_SEC_PREC)
         delta = max_dt - min_dt
         scale = ("seconds", delta.seconds) if delta.seconds < 60 \
             else ("minutes", int(delta.seconds / 60)) if delta.seconds < 3600 \
@@ -383,6 +586,7 @@ def user_dir_files(request):
 class ActivateLanguageView(View):
     language_code = ''
     redirect_to = ''
+
     def get(self, request, *args, **kwargs):  # noqa
         self.redirect_to = request.META.get('HTTP_REFERER')
         self.language_code = kwargs.get('language_code')
@@ -410,7 +614,8 @@ def representation_dependency_graph(request):  # noqa
 
 class InformationPackageTable(tables.Table):
     information_package = tables.Column(orderable=False, verbose_name=_('Detected Information Package'))
-    selected = tables.LinkColumn('ip_overview_select', kwargs={'pk': A('pk')}, verbose_name=_('Selection'), orderable=False)
+    selected = tables.LinkColumn('ip_overview_select', kwargs={'pk': A('pk')}, verbose_name=_('Selection'),
+                                 orderable=False)
 
     class Meta:
         model = DetectedInformationPackage

@@ -29,7 +29,7 @@ XSI = "http://www.w3.org/2001/XMLSchema-instance"
 @task(context=True)
 @task_logger
 def validate_and_detect_ips(ips_root_dir, user_id, task=None, task_log=None):  # task parameter is provided by huey context
-    task_log.log("Loding information packages from user directory: %s" % ips_root_dir)
+    task_log.log("Loading information packages from user directory: %s" % ips_root_dir)
     # TODO: implement validation and detection of ips
     u = User.objects.get(id=user_id)
     # delete all user records first
@@ -91,6 +91,7 @@ def validate_and_detect_ips(ips_root_dir, user_id, task=None, task_log=None):  #
                             information_package=obj_id,
                             title="First IP",
                             ip_base_dir=root_mets_file_entry_base_dir,
+                            ip_filename=file_in_user_dir,
                             user=u,
                             selected=False
                         ).save()

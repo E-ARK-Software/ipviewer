@@ -6,3 +6,4 @@ django-huey-monitor==0.3.0
 huey==2.3.1
 lxml==4.6.2
 requests==2.25.1
+bx_py_utils==32

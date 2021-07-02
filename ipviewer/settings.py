@@ -25,7 +25,7 @@ SECRET_KEY = 'f0jpp8!9jtq-m)cqos2_05=tz8suf%vigzi^y)slr(hrtnxb8g'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 STATICFILES_DIRS = (

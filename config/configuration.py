@@ -60,7 +60,8 @@ allowed_upload_mime_types = list(map(str.strip, config.get('filetype', 'allowed_
 supported_processing_mime_types = list(map(str.strip, config.get('filetype', 'supported_processing_mime_types').split(sep=",")))
 
 mets_entry_pattern = config.get('filetype', 'mets_entry_pattern')
-
+ead_entry_pattern = config.get('filetype', 'ead_entry_pattern')
+premis_entry_pattern = config.get('filetype', 'premis_entry_pattern')
 
 def log_current_configuration():
     logger.info("Web-UI: %s://%s:%s" % (django_service_protocol, django_service_host, django_service_port))
