@@ -233,69 +233,189 @@ def get_representation_section(div, root_mets, t, root_mets_file_entry_base_dir)
     rep_node = {}
     for fptr in div.iter('{http://www.loc.gov/METS/}fptr'):
         file_name = fileSec_get_file_for_id(fileSec, fptr.get('FILEID'))
-        if file_name.endswith('METS.xml'):
-            rep_mets_file_entry = root_mets_file_entry_base_dir + file_name.strip('.')
-            rep_mets_content = read_textfile_from_tar(t, rep_mets_file_entry)
-            rep_mets = ET.fromstring(bytes(rep_mets_content, 'utf-8'))
-            representation = {}
-            rep_node = {"icon": "fa fa-ibox fa-fw",
-                         "text": rep_mets.get('OBJID'),
-                         "nodes": []
-                         }
-            for rep_structMap in rep_mets.iter('{http://www.loc.gov/METS/}structMap'):
-                if rep_structMap.get('TYPE') == 'PHYSICAL':
-                    for div in rep_structMap.find('{http://www.loc.gov/METS/}div'):
-                        label = div.get('LABEL')
-                        if label == 'data':
-                            data = get_data_section(div, rep_mets)
-                            rep_node['nodes'].append(data)
-                            continue
-                        if label == 'schemas':
-                            schemas = get_schemas_section(div, rep_mets)
-                            rep_node['nodes'].append(schemas)
-                            continue
-                        if label == 'metadata':
-                            metadata = get_metadata_section(div, rep_mets)
-                            # Read premis and create premis entry
-                            metadata['premis'] = {}
-                            for entry in metadata['nodes']:
-                                if entry['text'].endswith('premis.xml'):
-                                    premis_file_entry = os.path.dirname(rep_mets_file_entry) + entry['text'].strip(".")
-                                    print(premis_file_entry)
-                                    rep_premis_content = read_textfile_from_tar(t, premis_file_entry)
-                                    rep_premis = ET.fromstring(bytes(rep_premis_content, 'utf-8'))
-
-                                    for rep_premis_event in rep_premis.iter('{info:lc/xmlns/premis-v2}event'):
-                                        rep_premis_eventDateTime = rep_premis_event.find('{info:lc/xmlns/premis-v2}eventDateTime')
-                                        rep_premis_eventType = rep_premis_event.find('{info:lc/xmlns/premis-v2}eventType')
-                                        if rep_premis_eventDateTime is not None and rep_premis_eventType is not None:
-                                            rep_node['premis'] = {
-                                                "created": rep_premis_eventDateTime.text,
-                                                "message": rep_premis_eventType.text
-                                            }
-
-                            rep_node['nodes'].append(metadata)
-                            continue
+        if file_name is not None:
+            if file_name.endswith('METS.xml'):
+                rep_mets_file_entry = root_mets_file_entry_base_dir + file_name.strip('.')
+                rep_mets_content = read_textfile_from_tar(t, rep_mets_file_entry)
+                rep_mets = ET.fromstring(bytes(rep_mets_content, 'utf-8'))
+                representation = {}
+                rep_node = {"icon": "fa fa-ibox fa-fw",
+                             "text": rep_mets.get('OBJID'),
+                             "nodes": []
+                             }
+                for rep_structMap in rep_mets.iter('{http://www.loc.gov/METS/}structMap'):
+                    if rep_structMap.get('TYPE') == 'PHYSICAL':
+                        for div in rep_structMap.find('{http://www.loc.gov/METS/}div'):
+                            label = div.get('LABEL')
+                            if label == 'data':
+                                data = get_data_section(div, rep_mets)
+                                rep_node['nodes'].append(data)
+                                continue
+                            if label == 'schemas':
+                                schemas = get_schemas_section(div, rep_mets)
+                                rep_node['nodes'].append(schemas)
+                                continue
+                            if label == 'metadata':
+                                metadata = get_metadata_section(div, rep_mets)
+                                # Read premis and create premis entry
+                                for entry in metadata['nodes']:
+                                    if entry['text'].endswith('premis.xml'):
+                                        premis_file_entry = os.path.dirname(rep_mets_file_entry) + entry['text'].strip(".")
+                                        print(premis_file_entry)
+                                        rep_premis_content = read_textfile_from_tar(t, premis_file_entry)
+                                        rep_premis = ET.fromstring(bytes(rep_premis_content, 'utf-8'))
+                                        metadata['premis'] = {'representations': getRepresentations(rep_premis),
+                                                              'events': getPemisEvents(rep_premis)}
+                                rep_node['nodes'].append(metadata)
+                                continue
     return rep_node
+
+
+def getRepresentations(rep_premis):
+    representations = []
+    for rep_object in rep_premis.iter('{info:lc/xmlns/premis-v2}object'):
+        rep = getRepresentation(rep_object)
+        if rep is not None:
+            representations.append(rep)
+    return representations
+
+
+def getRepresentation(rep_object):
+    if rep_object.get('{http://www.w3.org/2001/XMLSchema-instance}type') == 'file':
+        return {'xmlId': rep_object.get('xmlID'),
+                'objectId': getRepresentationObjectId(rep_object),
+                'relationship': getObjectRelationship(rep_object) }
+    return None
+
+def getRepresentationObjectId(rep_object):
+    rep_object_id = rep_object.find('{info:lc/xmlns/premis-v2}objectIdentifier')
+    if rep_object_id is not None:
+        rep_object_id_type = rep_object_id.find('{info:lc/xmlns/premis-v2}objectIdentifierType')
+        rep_object_id_value = rep_object_id.find('{info:lc/xmlns/premis-v2}objectIdentifierValue')
+        return {'type': rep_object_id_type.text,
+                'value': rep_object_id_value.text }
+    return None
+
+def getObjectRelationship(rep_object):
+    rep_object_relationship = rep_object.find('{info:lc/xmlns/premis-v2}relationship')
+    if rep_object_relationship is not None:
+        rep_object_relationship_type = rep_object_relationship.find(
+            '{info:lc/xmlns/premis-v2}relationshipType')
+        rep_object_relationship_subtype = rep_object_relationship.find(
+            '{info:lc/xmlns/premis-v2}relationshipSubType')
+        return {'type': rep_object_relationship_type.text,
+                'subtype': rep_object_relationship_subtype.text,
+                'objectId': getRelatedObjectId(rep_object_relationship),
+                'eventId': getRelatedEventId(rep_object_relationship)}
+    return None
+
+
+def getRelatedObjectId(rep_object_relationship):
+    rep_object_relationship_related_obj_id = rep_object_relationship.find(
+        '{info:lc/xmlns/premis-v2}relatedObjectIdentification')
+    if rep_object_relationship_related_obj_id is not None:
+        rep_object_relationship_related_obj_id_type = rep_object_relationship_related_obj_id.find(
+            '{info:lc/xmlns/premis-v2}relatedObjectIdentifierType')
+        rep_object_relationship_related_obj_id_value = rep_object_relationship_related_obj_id.find(
+            '{info:lc/xmlns/premis-v2}relatedObjectIdentifierValue')
+        rep_object_relationship_related_obj_sequence = rep_object_relationship_related_obj_id.find(
+            '{info:lc/xmlns/premis-v2}relatedObjectSequence')
+        return {'type': rep_object_relationship_related_obj_id_type.text,
+                'value': rep_object_relationship_related_obj_id_value.text,
+                'sequence': rep_object_relationship_related_obj_sequence.text}
+    return None
+
+
+def getRelatedEventId(rep_object_relationship):
+    rep_object_relationship_related_event_id = rep_object_relationship.find(
+        '{info:lc/xmlns/premis-v2}relatedEventIdentification')
+    if rep_object_relationship_related_event_id is not None:
+        rep_object_relationship_related_event_id_type = rep_object_relationship_related_event_id.find(
+            '{info:lc/xmlns/premis-v2}relatedEventIdentifierType')
+        rep_object_relationship_related_event_id_value = rep_object_relationship_related_event_id.find(
+            '{info:lc/xmlns/premis-v2}relatedEventIdentifierValue')
+        rep_object_relationship_related_event_sequence = rep_object_relationship_related_event_id.find(
+            '{info:lc/xmlns/premis-v2}relatedEventSequence')
+        return {'type': rep_object_relationship_related_event_id_type.text,
+                'value': rep_object_relationship_related_event_id_value.text,
+                'sequence': rep_object_relationship_related_event_sequence.text }
+    return None
+
+
+def getPremisEventId(rep_premis_event):
+    rep_premis_event_id = rep_premis_event.find('{info:lc/xmlns/premis-v2}eventIdentifier')
+    if rep_premis_event_id is not None:
+        rep_premis_event_id_type = rep_premis_event_id.find(
+            '{info:lc/xmlns/premis-v2}eventIdentifierType')
+        rep_premis_event_id_value = rep_premis_event_id.find(
+            '{info:lc/xmlns/premis-v2}eventIdentifierValue')
+        return {'type': rep_premis_event_id_type.text,
+                'value': rep_premis_event_id_value.text}
+    return None
+
+def getPemisEvents(rep_premis):
+    events = []
+    for rep_premis_event in rep_premis.iter('{info:lc/xmlns/premis-v2}event'):
+        rep_premis_event_datetime = rep_premis_event.find('{info:lc/xmlns/premis-v2}eventDateTime')
+        rep_premis_event_type = rep_premis_event.find('{info:lc/xmlns/premis-v2}eventType')
+        events.append({"datetime": rep_premis_event_datetime.text,
+                       "type": rep_premis_event_type.text,
+                       'id': getPremisEventId(rep_premis_event),
+                       'linking_agent_id': getPremisLinkingAgentId(rep_premis_event),
+                       'linking_object_id': getPremisLinkingObjectId(rep_premis_event)
+        })
+    return events
+
+def getPremisLinkingObjectId(rep_premis_event):
+    rep_premis_linking_object_identifier = rep_premis_event.find(
+        '{info:lc/xmlns/premis-v2}linkingObjectIdentifier')
+    if rep_premis_linking_object_identifier is not None:
+        rep_premis_linking_object_identifier_type = rep_premis_linking_object_identifier.find(
+            '{info:lc/xmlns/premis-v2}linkingObjectIdentifierType')
+        rep_premis_linking_object_identifier_value = rep_premis_linking_object_identifier.find(
+            '{info:lc/xmlns/premis-v2}linkingObjectIdentifierValue')
+        return {'type': rep_premis_linking_object_identifier_type.text,
+                'value': rep_premis_linking_object_identifier_value.text}
+    return None
+
+def getPremisLinkingAgentId(rep_premis_event):
+    rep_premis_linking_agent_identifier = rep_premis_event.find('{info:lc/xmlns/premis-v2}linkingAgentIdentifier')
+    if rep_premis_linking_agent_identifier is not None:
+        rep_premis_linking_agent_identifier_type = rep_premis_linking_agent_identifier.find(
+            '{info:lc/xmlns/premis-v2}linkingAgentIdentifierType')
+        rep_premis_linking_agent_identifier_value = rep_premis_linking_agent_identifier.find(
+            '{info:lc/xmlns/premis-v2}linkingAgentIdentifierValue')
+        return {'type': rep_premis_linking_agent_identifier_type.text,
+                'value': rep_premis_linking_agent_identifier_value.text}
+    return None
+
+def openInformationPackage(request):
+    user_data_path = os.path.join(ip_data_path, request.user.username)
+    vars = environment_variables(request)
+    if not vars['selected_ip']:
+        return None
+    object_path = os.path.join(user_data_path, vars['selected_ip'].ip_filename)
+    t = tarfile.open(object_path, 'r')
+    return t
+
+def readRootMetsFromIP(tarFile):
+    mets_info_entries = [member for member in tarFile.getmembers() if re.match(mets_entry_pattern, member.name)]
+    if len(mets_info_entries) == 1:
+        logger.info("Root METS file found in container file")
+        root_mets_file_entry = mets_info_entries[0].name
+        root_mets_file_entry_base_dir = os.path.dirname(root_mets_file_entry)
+        root_mets_content = read_textfile_from_tar(tarFile, root_mets_file_entry)
+        root_mets = ET.fromstring(bytes(root_mets_content, 'utf-8'))
+        return (root_mets, root_mets_file_entry_base_dir)
+    return None
 
 @login_required
 def ip_structure(request, tab):
     template = loader.get_template('ipviewer/ip_structure.html')
     logical_view_data = []
-    user_data_path = os.path.join(ip_data_path, request.user.username)
-    vars = environment_variables(request)
-    if not vars['selected_ip']:
-        return {}
-    object_path = os.path.join(user_data_path, vars['selected_ip'].ip_filename)
-    t = tarfile.open(object_path, 'r')
-
-    mets_info_entries = [member for member in t.getmembers() if re.match(mets_entry_pattern, member.name)]
-    if len(mets_info_entries) == 1:
-        logger.info("Root METS file found in container file")
-        root_mets_file_entry = mets_info_entries[0].name
-        root_mets_file_entry_base_dir = os.path.dirname(root_mets_file_entry)
-        root_mets_content = read_textfile_from_tar(t, root_mets_file_entry)
-        root_mets = ET.fromstring(bytes(root_mets_content, 'utf-8'))
+    tarFile, root_mets_file_entry_base_dir = openInformationPackage(request)
+    root_mets = readRootMetsFromIP(tarFile)
+    if root_mets is not None:
         # iterate structMap get ids and reference in dmdSec/amdSec/fileSec
         obj_id = root_mets.attrib['OBJID']
         logical_view_section = {
@@ -320,7 +440,7 @@ def ip_structure(request, tab):
                         logical_view_section['nodes'].append(metadata)
                         continue
 
-                    representation = get_representation_section(div, root_mets, t, root_mets_file_entry_base_dir)
+                    representation = get_representation_section(div, root_mets, tarFile, root_mets_file_entry_base_dir)
                     representations['nodes'].append(representation)
         logical_view_section['nodes'].append(representations)
 
@@ -367,76 +487,32 @@ def input_data(request, tab):
 @login_required
 def representations(request, tab):
     template = loader.get_template('ipviewer/representations.html')
-    inventory = {"versions": {} }
-    #TODO: Deduplicate code
-    logical_view_data = []
-    user_data_path = os.path.join(ip_data_path, request.user.username)
-    vars = environment_variables(request)
-    if not vars['selected_ip']:
-        return {}
-    object_path = os.path.join(user_data_path, vars['selected_ip'].ip_filename)
-    t = tarfile.open(object_path, 'r')
+    events = {}
 
-    mets_info_entries = [member for member in t.getmembers() if re.match(mets_entry_pattern, member.name)]
-    if len(mets_info_entries) == 1:
-        logger.info("Root METS file found in container file")
-        root_mets_file_entry = mets_info_entries[0].name
-        root_mets_file_entry_base_dir = os.path.dirname(root_mets_file_entry)
-        root_mets_content = read_textfile_from_tar(t, root_mets_file_entry)
-        root_mets = ET.fromstring(bytes(root_mets_content, 'utf-8'))
-        # iterate structMap get ids and reference in dmdSec/amdSec/fileSec
-        obj_id = root_mets.attrib['OBJID']
-        logical_view_section = {
-            "text": obj_id,
-            "icon": "fa fa-archive fa-fw",
-            "nodes": []
-        }
-        logical_view_data.append(logical_view_section)
-        representations = {"text": "representations",
-                           "icon": "fa fa-inbox fa-fw",
-                           "nodes": []}
-        version_label = 0;
+    tarFile, root_mets_file_entry_base_dir = openInformationPackage(request)
+    root_mets = readRootMetsFromIP(tarFile)
+    if root_mets is not None:
         for root_structMap in root_mets.iter('{http://www.loc.gov/METS/}structMap'):
             if root_structMap.get('TYPE') == 'PHYSICAL':
                 for div in root_structMap.find('{http://www.loc.gov/METS/}div'):
-                    label = div.get('LABEL')
-                    if label == 'schemas':
-                        schemas = get_schemas_section(div, root_mets)
-                        logical_view_section['nodes'].append(schemas)
-                        continue
-                    if label == 'metadata':
-                        metadata = get_metadata_section(div, root_mets)
-                        logical_view_section['nodes'].append(metadata)
-                        continue
+                    representation = get_representation_section(div, root_mets, tarFile, root_mets_file_entry_base_dir)
+                    if 'nodes' in representation:
+                        for node in representation['nodes']:
+                            if 'metadata' in node['text']:
+                                if 'premis' in node:
+                                    premis = node['premis']
+                                    if 'events' in premis:
+                                        for event in premis['events']:
+                                            events[event['datetime']] = event['type']
+    version_label = 0
+    inventory = {"versions": {}}
+    for datetime in events:
+        inventory['versions'][str(version_label)] = {
+            "created": datetime,
+            "message": events[datetime]
+        }
+        version_label+=1
 
-                    representation = get_representation_section(div, root_mets, t, root_mets_file_entry_base_dir)
-                    if 'premis' in representation:
-                        inventory['versions'][str(version_label)] = representation['premis']
-                        #TODO: get the version
-                        version_label+=1
-                        representations['nodes'].append(representation)
-        logical_view_section['nodes'].append(representations)
-
-    # inventory = {
-    #     "versions": {
-    #         "00000": {
-    #             "created": "2021-03-07T20:51:30Z",
-    #             "message": "Original SIP"
-    #         },
-    #         "00001": {
-    #             "created": "2021-03-07T20:51:33Z",
-    #             "message": "AIP (original ingest)"
-    #         },
-    #         "00002": {
-    #             "created": "2021-03-08T13:48:58Z",
-    #             "message": "AIP (original ingest)"
-    #         },
-    #         "00003": {
-    #             "created": "2021-03-08T13:59:33Z",
-    #             "message": "AIP (update)"
-    #         }
-    #     }
-    # }
     version_timeline_data = [
         {
             "id": int(key),
@@ -475,6 +551,38 @@ def representations(request, tab):
     }
     return HttpResponse(template.render(context=context, request=request))
 
+@csrf_exempt
+def representation_dependency_graph(request):  # noqa
+    template = loader.get_template('ipviewer/representations.html')
+    events = {}
+
+    tarFile, root_mets_file_entry_base_dir = openInformationPackage(request)
+    root_mets = readRootMetsFromIP(tarFile)
+    if root_mets is not None:
+        for root_structMap in root_mets.iter('{http://www.loc.gov/METS/}structMap'):
+            if root_structMap.get('TYPE') == 'PHYSICAL':
+                for div in root_structMap.find('{http://www.loc.gov/METS/}div'):
+                    representation = get_representation_section(div, root_mets, tarFile, root_mets_file_entry_base_dir)
+                    if 'nodes' in representation:
+                        for node in representation['nodes']:
+                            if 'metadata' in node['text']:
+                                if 'premis' in node:
+                                    premis = node['premis']
+                                    if 'events' in premis:
+                                        for event in premis['events']:
+                                            events[event['datetime']] = event['type']
+
+    # TODO: read migration paths from PREMIS file
+    nodes = [
+        {"id": 1, "label": "MS Word 2003 XML Document (SIP)", "shape": "box"},
+        {"id": 2, "label": "PDF document (ingest)", "shape": "box"},
+        {"id": 3, "label": "PDF/A document (migration)", "shape": "box"},
+    ]
+    edges = [
+        {"from": 1, "to": 2, "arrows": "to", "label": "Adobe Acrobat Office PDF Maker  v9.0"},
+        {"from": 2, "to": 3, "arrows": "to", "label": "Ghostscript v1.3"},
+    ]
+    return JsonResponse({"nodes": nodes, "edges": edges}, status=200)
 
 @login_required
 @csrf_exempt
@@ -595,21 +703,6 @@ class ActivateLanguageView(View):
         response = redirect(request.META.get('HTTP_REFERER', request.path_info))
         response.set_cookie(settings.LANGUAGE_COOKIE_NAME, self.language_code)
         return response
-
-
-@csrf_exempt
-def representation_dependency_graph(request):  # noqa
-    # TODO: read migration paths from PREMIS file
-    nodes = [
-        {"id": 1, "label": "MS Word 2003 XML Document (SIP)", "shape": "box"},
-        {"id": 2, "label": "PDF document (ingest)", "shape": "box"},
-        {"id": 3, "label": "PDF/A document (migration)", "shape": "box"},
-    ]
-    edges = [
-        {"from": 1, "to": 2, "arrows": "to", "label": "Adobe Acrobat Office PDF Maker  v9.0"},
-        {"from": 2, "to": 3, "arrows": "to", "label": "Ghostscript v1.3"},
-    ]
-    return JsonResponse({"nodes": nodes, "edges": edges}, status=200)
 
 
 class InformationPackageTable(tables.Table):
