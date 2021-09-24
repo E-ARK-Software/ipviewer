@@ -411,10 +411,13 @@ def readRootMetsFromIP(tarFile):
 
 @login_required
 def ip_structure(request, tab):
+    vars = environment_variables(request)
+    if not vars['selected_ip']:
+        return {}
     template = loader.get_template('ipviewer/ip_structure.html')
     logical_view_data = []
-    tarFile, root_mets_file_entry_base_dir = openInformationPackage(request)
-    root_mets = readRootMetsFromIP(tarFile)
+    tarFile = openInformationPackage(request)
+    root_mets, root_mets_file_entry_base_dir = readRootMetsFromIP(tarFile)
     if root_mets is not None:
         # iterate structMap get ids and reference in dmdSec/amdSec/fileSec
         obj_id = root_mets.attrib['OBJID']
@@ -486,11 +489,14 @@ def input_data(request, tab):
 
 @login_required
 def representations(request, tab):
+    vars = environment_variables(request)
+    if not vars['selected_ip']:
+        return {}
     template = loader.get_template('ipviewer/representations.html')
     events = {}
 
-    tarFile, root_mets_file_entry_base_dir = openInformationPackage(request)
-    root_mets = readRootMetsFromIP(tarFile)
+    tarFile = openInformationPackage(request)
+    root_mets, root_mets_file_entry_base_dir = readRootMetsFromIP(tarFile)
     if root_mets is not None:
         for root_structMap in root_mets.iter('{http://www.loc.gov/METS/}structMap'):
             if root_structMap.get('TYPE') == 'PHYSICAL':
