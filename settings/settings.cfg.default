@@ -29,9 +29,14 @@ extracted_schemas_directory = schemas
 [system]
 backend_api_key = BUvCqFi6.gZdQATBvCysUsIZz7yx5rfn82MG7XdxA
 
+[metadata]
+metadata_file_pattern_ead = [Ee][Aa][Dd]*.xml
+
 [filetype]
 input_file_filter_regex = .*(.tar)$
 allowed_upload_mime_types = application/x-tar
 supported_processing_mime_types = application/x-tar
 mets_entry_pattern = [^/]*/?(METS|mets|Mets).(xml|XML)
 mets_schema_pattern = schemas/(METS|mets|Mets).*.xsd
+ead_entry_pattern = .*/?(EAD|ead|Ead).(xml|XML)
+premis_entry_pattern = .*/?(premis).(xml|XML)

@@ -34,9 +34,9 @@
    <i aria-hidden="true" class="fas fa-boxes"></i>  {% trans 'Package structure' %}
   </a>
   <div class="dropdown-menu" aria-labelledby="navbarDropdown4">
-    <a class="dropdown-item" href="{% url 'ip_structure' 1  %}">{% trans 'Logical view' %}</a>
     <a class="dropdown-item" href="{% url 'ip_overview'  %}">{% trans 'Overview' %}</a>
-    <!--<a class="dropdown-item" href="{% url 'ip_structure' 2 %}">{% trans 'Physical view' %}</a>-->
+    <a class="dropdown-item" href="{% url 'ip_structure' 1  %}">{% trans 'Logical view' %}</a>
+    <a class="dropdown-item" href="{% url 'ip_structure' 2 %}">{% trans 'Physical view' %}</a>
   </div>
 </li>
 

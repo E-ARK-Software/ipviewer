@@ -1,3 +1,4 @@
+import fnmatch
 import logging
 import os
 
@@ -24,7 +25,8 @@ from django.http import HttpResponseNotFound, HttpResponseBadRequest, HttpRespon
 from eatb.utils.fileutils import fsize, get_mime_type, read_file_content
 
 from config.configuration import config_max_http_download, file_size_limit, django_service_ulr, task_logfile_name, \
-    mets_entry_pattern, extracted_schemas_directory, ead_entry_pattern, ip_data_path, django_base_service_url
+    mets_entry_pattern, extracted_schemas_directory, ead_entry_pattern, ip_data_path, django_base_service_url, \
+    metadata_file_pattern_ead
 from ipviewer.context_processors import environment_variables
 from ipviewer.models import DetectedInformationPackage
 from ipviewer.tasks import validate_and_detect_ips
@@ -463,10 +465,22 @@ def ip_structure(request, tab):
                     label = div.get('LABEL')
                     if label == 'schemas':
                         schemas = get_schemas_section(div, root_mets, root_mets_file_entry_base_dir)
-                        logical_view_section['nodes'].append(schemas)
+                        # logical_view_section['nodes'].append(schemas)
                         continue
                     if label == 'metadata':
                         metadata = get_metadata_section(div, root_mets, root_mets_file_entry_base_dir)
+                        # simplify view for logical view
+                        nodes_list = []
+                        for n in metadata['nodes']:
+                            text = n['text']
+                            print(text)
+                            if fnmatch.fnmatch(text, metadata_file_pattern_ead):
+                                print("matched")
+                                n['text'] = "EAD Descriptive Metadata"
+                                n['href'] = n['href'].replace("file-from-ip", "display-basic-metadata")
+                                n['mdtype'] = "ead"
+                                nodes_list.append(n)
+                        metadata['nodes'] = nodes_list
                         logical_view_section['nodes'].append(metadata)
                         continue
 
