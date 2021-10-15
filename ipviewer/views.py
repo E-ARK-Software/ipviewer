@@ -1,6 +1,7 @@
 import logging
 import os
 
+import magic
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.template import loader
@@ -23,8 +24,7 @@ from django.http import HttpResponseNotFound, HttpResponseBadRequest, HttpRespon
 from eatb.utils.fileutils import fsize, get_mime_type, read_file_content
 
 from config.configuration import config_max_http_download, file_size_limit, django_service_ulr, task_logfile_name, \
-    mets_entry_pattern, extracted_schemas_directory, ead_entry_pattern
-from config.configuration import ip_data_path
+    mets_entry_pattern, extracted_schemas_directory, ead_entry_pattern, ip_data_path, django_base_service_url
 from ipviewer.context_processors import environment_variables
 from ipviewer.models import DetectedInformationPackage
 from ipviewer.tasks import validate_and_detect_ips
@@ -33,6 +33,7 @@ import tarfile
 import re
 import lxml.etree as ET
 from ipviewer.util import read_textfile_from_tar
+from eatb.packaging.tar_entry_reader import ChunkedTarEntryReader
 from mimetypes import MimeTypes
 # , get_schema_location_by_regex, get_schema_locations, extract_container_entries
 logger = logging.getLogger(__name__)
@@ -53,14 +54,24 @@ def get_ip_overview_context(request):
     if not vars['selected_ip']:
         return {}
     object_path = os.path.join(user_data_path, vars['selected_ip'].ip_filename)
-    t = tarfile.open(object_path, 'r')
-    mets_info_entries = [member for member in t.getmembers() if re.match(mets_entry_pattern, member.name)]
+    tarFile = tarfile.open(object_path, 'r')
+    mets_info_entries = [member for member in tarFile.getmembers() if re.match(mets_entry_pattern, member.name)]
     if len(mets_info_entries) == 1:
         logger.info("Root METS file found in container file")
         root_mets_file_entry = mets_info_entries[0].name
         root_mets_file_entry_base_dir = os.path.dirname(root_mets_file_entry)
-        root_mets_content = read_textfile_from_tar(t, root_mets_file_entry)
+        root_mets_content = read_textfile_from_tar(tarFile, root_mets_file_entry)
         root_mets = ET.fromstring(bytes(root_mets_content, 'utf-8'))
+
+        all_schemas = []
+        for root_structMap in root_mets.iter('{http://www.loc.gov/METS/}structMap'):
+            if root_structMap.get('TYPE') == 'PHYSICAL':
+                for div in root_structMap.find('{http://www.loc.gov/METS/}div'):
+                    label = div.get('LABEL')
+                    if label == 'schemas':
+                        schemas = get_schemas_section(div, root_mets, root_mets_file_entry_base_dir)
+                        all_schemas += [schema['text'] for schema in schemas['nodes']]
+                        continue
 
         #print(root_mets.attrib['OBJID'])
         # for child in parsed_mets:
@@ -70,17 +81,17 @@ def get_ip_overview_context(request):
 
         overview = {}
         total_size = 0
-        total_number_content_files = 16
+        total_number_content_files = 0
         content_mime_types = []
         representations = []
         overview['object_id'] = root_mets.attrib['OBJID']
 
-        ead_info_entries = [member for member in t.getmembers() if re.match(ead_entry_pattern, member.name)]
+        ead_info_entries = [member for member in tarFile.getmembers() if re.match(ead_entry_pattern, member.name)]
         if len(ead_info_entries) == 1:
             logger.info("EAD file found in container file")
             root_ead_file_entry = ead_info_entries[0].name
             root_ead_file_entry_base_dir = os.path.dirname(root_ead_file_entry)
-            root_ead_content = read_textfile_from_tar(t, root_ead_file_entry)
+            root_ead_content = read_textfile_from_tar(tarFile, root_ead_file_entry)
             root_ead = ET.fromstring(bytes(root_ead_content, 'utf-8'))
 
             found = [element.text for element in root_ead.iter('{http://ead3.archivists.org/schema/}titleproper')]
@@ -96,7 +107,7 @@ def get_ip_overview_context(request):
                     FLocat = root_file.find('{http://www.loc.gov/METS/}FLocat')
                     rep_mets_file_entry = FLocat.get("{http://www.w3.org/1999/xlink}href")
                     rep_mets_file_entry = root_mets_file_entry_base_dir + rep_mets_file_entry.strip('.')
-                    rep_mets_content = read_textfile_from_tar(t, rep_mets_file_entry)
+                    rep_mets_content = read_textfile_from_tar(tarFile, rep_mets_file_entry)
                     rep_mets = ET.fromstring(bytes(rep_mets_content, 'utf-8'))
                     representation = {}
                     representation['identifier'] = rep_mets.get('OBJID')
@@ -116,9 +127,12 @@ def get_ip_overview_context(request):
                             total_number_content_files +=1
                     representations.append(representation)
         overview['representations'] = representations
+        total_number_representations = len(representations)
         overview['stats'] = {
                    "total_size": total_size,
                    "total_number_content_files": total_number_content_files,
+                   "total_number_representations": total_number_representations,
+                   "schemas": ','.join(all_schemas),
                    "content_mime_types": ", ".join(list(set(content_mime_types))),
                }
     return overview
@@ -164,7 +178,7 @@ def fileSec_get_file_for_id(fileSec, id):
             FLocat = file.find('{http://www.loc.gov/METS/}FLocat')
             fname = FLocat.get("{http://www.w3.org/1999/xlink}href")
             return fname
-    #TODO: logg
+    #TODO: log
     return None
 
 def mdSec_get_file_for_id(mdSec, id):
@@ -172,11 +186,34 @@ def mdSec_get_file_for_id(mdSec, id):
         if mdRef.get('ID') == id:
             fname = mdRef.get("{http://www.w3.org/1999/xlink}href")
             return fname
-    #TODO: logg
+    #TODO: log
     return None
 
 
-def get_schemas_section(div, root_mets):
+from urllib.parse import urljoin
+
+def get_schemas_section(div, root_mets, base_dir):
+    fileSec = next(root_mets.iter('{http://www.loc.gov/METS/}fileSec'))
+    label = div.get('LABEL')
+    node = { "text": label,
+             "icon": "fa fa-inbox fa-fw",
+             "nodes": [] }
+
+    print("%s %s %s %s" % (django_service_ulr, django_base_service_url, ip_data_path, base_dir))
+
+    for fptr in div.iter('{http://www.loc.gov/METS/}fptr'):
+        name = fileSec_get_file_for_id(fileSec, fptr.get('FILEID'))
+        href = django_service_ulr + '/file-from-ip/' + base_dir + name.strip('.')
+
+        file_node = { "icon": "fa fa-file fa-fw",
+                      "text": name,
+                      "href": href
+                      #"href": "https://google.com"
+                    }
+        node['nodes'].append(file_node)
+    return node
+
+def get_data_section(div, root_mets, base_dir):
     fileSec = next(root_mets.iter('{http://www.loc.gov/METS/}fileSec'))
     label = div.get('LABEL')
     node = { "text": label,
@@ -184,28 +221,16 @@ def get_schemas_section(div, root_mets):
              "nodes": [] }
     for fptr in div.iter('{http://www.loc.gov/METS/}fptr'):
         name = fileSec_get_file_for_id(fileSec, fptr.get('FILEID'))
+        href = django_service_ulr + '/file-from-ip/' + base_dir + name.strip('.')
         file_node = { "icon": "fa fa-file fa-fw",
                       "text": name,
-                    }
-        node['nodes'].append(file_node)
-    return node
-
-def get_data_section(div, root_mets):
-    fileSec = next(root_mets.iter('{http://www.loc.gov/METS/}fileSec'))
-    label = div.get('LABEL')
-    node = { "text": label,
-             "icon": "fa fa-inbox fa-fw",
-             "nodes": [] }
-    for fptr in div.iter('{http://www.loc.gov/METS/}fptr'):
-        name = fileSec_get_file_for_id(fileSec, fptr.get('FILEID'))
-        file_node = { "icon": "fa fa-file fa-fw",
-                      "text": name,
+                      "href": href
                     }
         node['nodes'].append(file_node)
     return node
 
 
-def get_metadata_section(div, root_mets):
+def get_metadata_section(div, root_mets, base_dir):
     sections = [section for section in root_mets.iter('{http://www.loc.gov/METS/}dmdSec')]
     sections += [section for section in root_mets.iter('{http://www.loc.gov/METS/}amdSec')]
     #amdSec = next(root_mets.iter('{http://www.loc.gov/METS/}amdSec'))
@@ -218,16 +243,18 @@ def get_metadata_section(div, root_mets):
         for section in sections:
             name = mdSec_get_file_for_id(section, fptr.get('FILEID'))
             if name:
-                if name.endswith('premis.xml'):
-                    print("Found premis")
+                href = django_service_ulr + '/file-from-ip/' + base_dir + name.strip('.')
+                #if name.endswith('premis.xml'):
+                #    print("Found premis")
                 file_node = {"icon": "fa fa-file fa-fw",
                              "text": name,
+                             "href": href
                              }
                 node['nodes'].append(file_node)
                 break
     return node
 
-def get_representation_section(div, root_mets, t, root_mets_file_entry_base_dir):
+def get_representation_section(div, root_mets, tarFile, root_mets_file_entry_base_dir):
     fileSec = next(root_mets.iter('{http://www.loc.gov/METS/}fileSec'))
     label = div.get('LABEL')
     rep_node = {}
@@ -236,7 +263,7 @@ def get_representation_section(div, root_mets, t, root_mets_file_entry_base_dir)
         if file_name is not None:
             if file_name.endswith('METS.xml'):
                 rep_mets_file_entry = root_mets_file_entry_base_dir + file_name.strip('.')
-                rep_mets_content = read_textfile_from_tar(t, rep_mets_file_entry)
+                rep_mets_content = read_textfile_from_tar(tarFile, rep_mets_file_entry)
                 rep_mets = ET.fromstring(bytes(rep_mets_content, 'utf-8'))
                 representation = {}
                 rep_node = {"icon": "fa fa-ibox fa-fw",
@@ -248,21 +275,21 @@ def get_representation_section(div, root_mets, t, root_mets_file_entry_base_dir)
                         for div in rep_structMap.find('{http://www.loc.gov/METS/}div'):
                             label = div.get('LABEL')
                             if label == 'data':
-                                data = get_data_section(div, rep_mets)
+                                data = get_data_section(div, rep_mets, os.path.dirname(rep_mets_file_entry))
                                 rep_node['nodes'].append(data)
                                 continue
                             if label == 'schemas':
-                                schemas = get_schemas_section(div, rep_mets)
+                                schemas = get_schemas_section(div, rep_mets, os.path.dirname(rep_mets_file_entry))
                                 rep_node['nodes'].append(schemas)
                                 continue
                             if label == 'metadata':
-                                metadata = get_metadata_section(div, rep_mets)
+                                metadata = get_metadata_section(div, rep_mets, os.path.dirname(rep_mets_file_entry))
                                 # Read premis and create premis entry
                                 for entry in metadata['nodes']:
                                     if entry['text'].endswith('premis.xml'):
                                         premis_file_entry = os.path.dirname(rep_mets_file_entry) + entry['text'].strip(".")
                                         print(premis_file_entry)
-                                        rep_premis_content = read_textfile_from_tar(t, premis_file_entry)
+                                        rep_premis_content = read_textfile_from_tar(tarFile, premis_file_entry)
                                         rep_premis = ET.fromstring(bytes(rep_premis_content, 'utf-8'))
                                         metadata['premis'] = {'representations': getRepresentations(rep_premis),
                                                               'events': getPemisEvents(rep_premis)}
@@ -435,11 +462,11 @@ def ip_structure(request, tab):
                 for div in root_structMap.find('{http://www.loc.gov/METS/}div'):
                     label = div.get('LABEL')
                     if label == 'schemas':
-                        schemas = get_schemas_section(div, root_mets)
+                        schemas = get_schemas_section(div, root_mets, root_mets_file_entry_base_dir)
                         logical_view_section['nodes'].append(schemas)
                         continue
                     if label == 'metadata':
-                        metadata = get_metadata_section(div, root_mets)
+                        metadata = get_metadata_section(div, root_mets, root_mets_file_entry_base_dir)
                         logical_view_section['nodes'].append(metadata)
                         continue
 
@@ -455,7 +482,8 @@ def ip_structure(request, tab):
                 {
                     "text": vars['selected_ip'].ip_filename,
                     "icon": "fa fa-archive fa-fw",
-                    "nodes": logical_view_section['nodes']
+                    "nodes": logical_view_section['nodes'],
+                    "href": "https://google.com"
                 }
             ]
         }
@@ -615,6 +643,11 @@ def upload(request):
             with open(file_path, 'wb+') as destination:
                 for chunk in posted_files['file_data'].chunks():
                     destination.write(chunk)
+            # untar archive for file visualization
+            # if file_path.endswith("tar"):
+            #     tar = tarfile.open(file_path, "r:")
+            #     tar.extractall(user_data_path)
+            #     tar.close()
             file_upload_resp = {
                 "ver": "1.0",
                 "ret": True,
@@ -657,6 +690,22 @@ def user_file_resource(request, file_path):
             msg = "Unable to remove file: %s" % user_data_file_path
             return JsonResponse({'error': msg}, status=500)
 
+def file_from_ip(request, file_path):
+    user_data_path = os.path.join(ip_data_path, request.user.username)
+    vars = environment_variables(request)
+    if not vars['selected_ip']:
+        return {}
+    archive_file_path = os.path.join(user_data_path, vars['selected_ip'].ip_filename)
+    t = tarfile.open(archive_file_path, 'r')
+    info = t.getmember(file_path)
+    f = t.extractfile(info)
+    start_bytes = f.read(256)
+
+    inst = ChunkedTarEntryReader(t)
+    magic_mime_detect = magic.Magic(mime=True)
+    mime = magic_mime_detect.from_buffer(start_bytes)
+
+    return HttpResponse(inst.chunks(file_path), content_type=mime)
 
 def read_file(file_path):
     if not os.path.exists(file_path):
