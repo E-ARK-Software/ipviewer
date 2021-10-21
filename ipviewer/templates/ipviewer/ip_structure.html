@@ -44,7 +44,9 @@
 
 <div class="tab-content">
    <div class="tab-pane container{% if tab == '1' %} active{% else %} fade{% endif %}" id="logical-view-tab">
-	  <div id="logical-view">
+	  <table>
+          <tr><td style="width: 700px">
+      <div id="logical-view">
 	  </div>
 	  <script>
 			$(function () {
@@ -57,7 +59,15 @@
 					openNodeLinkOnNewTab: true
 				});
 			});
-		</script>
+      </script>
+      </td><td style="vertical-align: top; padding-left: 5px">
+      <div id="metadata-details" class="hidden">
+        <h3 id="metadata-type"></h3>
+        <p id="metadata-title" class="emph"></p>
+        <p id="metadata-date"></p>
+      </div>
+      </td></tr>
+        </table>
   </div>
   <div class="tab-pane container{% if tab == '2' %} active{% else %} fade{% endif %}" id="physical-view-tab">
 		<div id="physical-view">
@@ -73,9 +83,27 @@
 					openNodeLinkOnNewTab: true
 				});
 			});
+            $(document).ready(function() {
+              $(".list-group-item").click(function() {
+                console.log($(this).text());
+                if($(this).text() === 'PREMIS Preservation Metadata' || $(this).text() === 'EAD Descriptive Metadata' ) {
+                    $('#metadata-details').addClass("visible").removeClass("hidden");
+                    $.get($(this).attr('href'), function(data) {
+                        console.log(data);
+                        $('#metadata-type').text(data.type);
+                        $('#metadata-title').text("Title: "+data.title);
+                        $('#metadata-date').text("Date: "+data.date);
+                    });
+
+                    return false;
+                }
+              });
+            });
 		</script>
   </div>
+
 </div>
+
 
 {% else %}
 

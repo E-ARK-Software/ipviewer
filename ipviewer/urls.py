@@ -22,7 +22,7 @@ from django.views.generic import RedirectView
 from config.configuration import log_current_configuration
 from ipviewer.views import input_data, ip_structure, representations, upload, user_dir_files, \
     user_file_resource, validate_load_result, ip_overview, representation_dependency_graph, reload_table, \
-    InformationPackageDetail, file_from_ip
+    InformationPackageDetail, file_from_ip, get_basic_metadata
 from ipviewer.views import ActivateLanguageView
 
 urlptns = [
@@ -41,6 +41,7 @@ urlptns = [
     url(r'^user-dir-files$', user_dir_files, name='user_dir_files'),
     url(r'^file-resource/(?P<file_path>.*)/$', user_file_resource, name='file_resource'),
     url(r'^file-from-ip/(?P<file_path>.+)/$', file_from_ip, name='file_from_ip'),
+    url(r'^get-basic-metadata/(?P<file_path>.+)/$', get_basic_metadata, name='get_basic_metadata'),
 
 
     path('accounts/', include('django.contrib.auth.urls')),

@@ -1,3 +1,4 @@
+import copy
 import fnmatch
 import logging
 import os
@@ -17,16 +18,18 @@ from django.shortcuts import redirect, render
 from django.conf import settings
 from django_tables2 import RequestConfig, A
 import django_tables2 as tables
+from eatb.metadata.parsedead import ParsedEad
 
 from eatb.utils.datetime import DT_ISO_FORMAT, DT_ISO_FMT_SEC_PREC, get_date_from_iso_str
 from eatb.utils.fileutils import list_files_in_dir
 
 from django.http import HttpResponseNotFound, HttpResponseBadRequest, HttpResponseForbidden, FileResponse, HttpResponse
 from eatb.utils.fileutils import fsize, get_mime_type, read_file_content
+from eatb.utils.randomutils import randomword
 
 from config.configuration import config_max_http_download, file_size_limit, django_service_ulr, task_logfile_name, \
     mets_entry_pattern, extracted_schemas_directory, ead_entry_pattern, ip_data_path, django_base_service_url, \
-    metadata_file_pattern_ead
+    metadata_file_pattern_ead, metadata_file_pattern_premis, ead_md_type, premis_md_type
 from ipviewer.context_processors import environment_variables
 from ipviewer.models import DetectedInformationPackage
 from ipviewer.tasks import validate_and_detect_ips
@@ -465,25 +468,12 @@ def ip_structure(request, tab):
                     label = div.get('LABEL')
                     if label == 'schemas':
                         schemas = get_schemas_section(div, root_mets, root_mets_file_entry_base_dir)
-                        # logical_view_section['nodes'].append(schemas)
+                        logical_view_section['nodes'].append(schemas)
                         continue
                     if label == 'metadata':
                         metadata = get_metadata_section(div, root_mets, root_mets_file_entry_base_dir)
-                        # simplify view for logical view
-                        nodes_list = []
-                        for n in metadata['nodes']:
-                            text = n['text']
-                            print(text)
-                            if fnmatch.fnmatch(text, metadata_file_pattern_ead):
-                                print("matched")
-                                n['text'] = "EAD Descriptive Metadata"
-                                n['href'] = n['href'].replace("file-from-ip", "display-basic-metadata")
-                                n['mdtype'] = "ead"
-                                nodes_list.append(n)
-                        metadata['nodes'] = nodes_list
                         logical_view_section['nodes'].append(metadata)
                         continue
-
                     representation = get_representation_section(div, root_mets, tarFile, root_mets_file_entry_base_dir)
                     representations['nodes'].append(representation)
         logical_view_section['nodes'].append(representations)
@@ -497,16 +487,35 @@ def ip_structure(request, tab):
                     "text": vars['selected_ip'].ip_filename,
                     "icon": "fa fa-archive fa-fw",
                     "nodes": logical_view_section['nodes'],
-                    "href": "https://google.com"
                 }
             ]
         }
     ]
+
+    new_physical_view_data = copy.deepcopy(physical_view_data)
+    for logical_package_node in logical_view_data:
+        package_item_nodes = logical_package_node['nodes']
+        for folder_node in package_item_nodes:
+            if folder_node['text'] == 'metadata':
+                item_nodes = folder_node['nodes']
+                for i, item_node in enumerate(item_nodes):
+                    if fnmatch.fnmatch(item_node['text'], metadata_file_pattern_ead):
+                        item_node['text'] = ead_md_type
+                        item_node['href'] = item_node['href'].replace("file-from-ip", "get-basic-metadata")
+                    elif fnmatch.fnmatch(item_node['text'], metadata_file_pattern_premis):
+                        item_node['text'] = premis_md_type
+                        item_node['href'] = item_node['href'].replace("file-from-ip", "get-basic-metadata")
+                    else:
+                        item_node['class'] = "hidden"
+            elif folder_node['text'] == 'schemas':
+                folder_node['class'] = "hidden"
+
     context = {
         "logical_view_data": logical_view_data,
-        "physical_view_data": physical_view_data,
-        "tab": tab
+        "physical_view_data": new_physical_view_data,
+        "tab": tab,
     }
+
     return HttpResponse(template.render(context=context, request=request))
 
 
@@ -703,6 +712,46 @@ def user_file_resource(request, file_path):
         else:
             msg = "Unable to remove file: %s" % user_data_file_path
             return JsonResponse({'error': msg}, status=500)
+
+def get_basic_metadata(request, file_path):
+    user_data_path = os.path.join(ip_data_path, request.user.username)
+    vars = environment_variables(request)
+    if not vars['selected_ip']:
+        return {}
+    print(file_path)
+    archive_file_path = os.path.join(user_data_path, vars['selected_ip'].ip_filename)
+    t = tarfile.open(archive_file_path, 'r')
+    file_content = read_textfile_from_tar(t, file_path)
+    tmp_file_path = "/tmp/%s" % randomword(10)
+    try:
+        title = ""
+        date = ""
+        with open(tmp_file_path, 'w') as tmp_file:
+            tmp_file.write(file_content)
+        if fnmatch.fnmatch(file_path, metadata_file_pattern_ead):
+            pead = ParsedEad("/tmp", tmp_file_path)
+            dao_elements = pead.get_dao_elements()
+            actual = pead.ead_tree.getroot().tag
+            unit_titles = []
+            unit_dates = []
+            for dao_elm in dao_elements:
+                unit_titles.append(pead._first_md_val_ancpath(dao_elm, "unittitle"))
+                unit_dates.append(pead._first_md_val_ancpath(dao_elm, "unitdate"))
+            title = unit_titles[0]
+            date = unit_dates[0]
+        elif fnmatch.fnmatch(file_path, metadata_file_pattern_premis):
+            # TODO: read PREMIS basic metadata
+            title = "Title"
+            date = "20.09.2017"
+
+        md_type = ead_md_type if fnmatch.fnmatch(file_path, metadata_file_pattern_ead)  \
+            else premis_md_type if fnmatch.fnmatch(file_path, metadata_file_pattern_premis) else "Other"
+
+        return JsonResponse({'success': True, 'type': md_type, 'title': title, 'date': date, 'file_path': file_path}, status=200)
+    except Exception as error:
+        logger.exception(error)
+        return JsonResponse({'success': False, 'error': str(error)}, status=500)
+
 
 def file_from_ip(request, file_path):
     user_data_path = os.path.join(ip_data_path, request.user.username)

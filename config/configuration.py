@@ -59,8 +59,11 @@ input_file_filter_regex = config.get('filetype', 'input_file_filter_regex')
 allowed_upload_mime_types = list(map(str.strip, config.get('filetype', 'allowed_upload_mime_types').split(sep=",")))
 supported_processing_mime_types = list(map(str.strip, config.get('filetype', 'supported_processing_mime_types').split(sep=",")))
 
-# EAD metadata file pattern
+# metadata
 metadata_file_pattern_ead =  config.get('metadata', 'metadata_file_pattern_ead')
+ead_md_type = config.get('metadata', 'ead_md_type')
+metadata_file_pattern_premis =  config.get('metadata', 'metadata_file_pattern_premis')
+premis_md_type = config.get('metadata', 'premis_md_type')
 
 mets_entry_pattern = config.get('filetype', 'mets_entry_pattern')
 ead_entry_pattern = config.get('filetype', 'ead_entry_pattern')

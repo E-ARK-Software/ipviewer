@@ -8,6 +8,12 @@ h4 {
 body {
  background:#e4e5e6
 }
+.hidden {
+    display: none;
+}
+.visible {
+    display: block;
+}
 a,
 a:hover {
  color:#533f03
