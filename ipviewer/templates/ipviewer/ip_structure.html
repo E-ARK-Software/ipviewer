@@ -65,6 +65,7 @@
         <h3 id="metadata-type"></h3>
         <p id="metadata-title" class="emph"></p>
         <p id="metadata-date"></p>
+        <p id="metadata-events"></p>
       </div>
       </td></tr>
         </table>
@@ -93,6 +94,7 @@
                         $('#metadata-type').text(data.type);
                         $('#metadata-title').text("Title: "+data.title);
                         $('#metadata-date').text("Date: "+data.date);
+                        $('#metadata-events').text("Events: "+data.events);
                     });
 
                     return false;
@@ -103,7 +105,6 @@
   </div>
 
 </div>
-
 
 {% else %}
 

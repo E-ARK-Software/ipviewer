@@ -421,12 +421,9 @@ def getPremisLinkingAgentId(rep_premis_event):
                 'value': rep_premis_linking_agent_identifier_value.text}
     return None
 
-def openInformationPackage(request):
-    user_data_path = os.path.join(ip_data_path, request.user.username)
-    vars = environment_variables(request)
-    if not vars['selected_ip']:
-        return None
-    object_path = os.path.join(user_data_path, vars['selected_ip'].ip_filename)
+def openInformationPackage(selected_ip, username):
+    user_data_path = os.path.join(ip_data_path, username)
+    object_path = os.path.join(user_data_path, selected_ip.ip_filename)
     t = tarfile.open(object_path, 'r')
     return t
 
@@ -446,9 +443,15 @@ def ip_structure(request, tab):
     vars = environment_variables(request)
     if not vars['selected_ip']:
         return {}
+    selected_ip = vars['selected_ip']
     template = loader.get_template('ipviewer/ip_structure.html')
+    context = get_ip_structure(request.user.username, selected_ip)
+    context["tab"] = tab
+    return HttpResponse(template.render(context=context, request=request))
+
+def get_ip_structure(username, selected_ip):
     logical_view_data = []
-    tarFile = openInformationPackage(request)
+    tarFile = openInformationPackage(selected_ip, username)
     root_mets, root_mets_file_entry_base_dir = readRootMetsFromIP(tarFile)
     if root_mets is not None:
         # iterate structMap get ids and reference in dmdSec/amdSec/fileSec
@@ -460,8 +463,8 @@ def ip_structure(request, tab):
         }
         logical_view_data.append(logical_view_section)
         representations = {"text": "representations",
-                "icon": "fa fa-inbox fa-fw",
-                "nodes": []}
+                           "icon": "fa fa-inbox fa-fw",
+                           "nodes": []}
         for root_structMap in root_mets.iter('{http://www.loc.gov/METS/}structMap'):
             if root_structMap.get('TYPE') == 'PHYSICAL':
                 for div in root_structMap.find('{http://www.loc.gov/METS/}div'):
@@ -477,21 +480,19 @@ def ip_structure(request, tab):
                     representation = get_representation_section(div, root_mets, tarFile, root_mets_file_entry_base_dir)
                     representations['nodes'].append(representation)
         logical_view_section['nodes'].append(representations)
-
     physical_view_data = [
         {
             "text": "Container files",
             "icon": "fa fa-boxes fa-fw",
             "nodes": [
                 {
-                    "text": vars['selected_ip'].ip_filename,
+                    "text": selected_ip.ip_filename,
                     "icon": "fa fa-archive fa-fw",
                     "nodes": logical_view_section['nodes'],
                 }
             ]
         }
     ]
-
     new_physical_view_data = copy.deepcopy(physical_view_data)
     for logical_package_node in logical_view_data:
         package_item_nodes = logical_package_node['nodes']
@@ -509,14 +510,11 @@ def ip_structure(request, tab):
                         item_node['class'] = "hidden"
             elif folder_node['text'] == 'schemas':
                 folder_node['class'] = "hidden"
-
     context = {
         "logical_view_data": logical_view_data,
         "physical_view_data": new_physical_view_data,
-        "tab": tab,
     }
-
-    return HttpResponse(template.render(context=context, request=request))
+    return context
 
 
 @login_required
@@ -713,13 +711,43 @@ def user_file_resource(request, file_path):
             msg = "Unable to remove file: %s" % user_data_file_path
             return JsonResponse({'error': msg}, status=500)
 
+
+def search(search_dict, field):
+    """
+    Takes a dict with nested lists and dicts,
+    and searches all dicts for a key of the field
+    provided.
+    """
+    fields_found = []
+    if isinstance(search_dict, dict):
+        for key, value in search_dict.items():
+            if key == field:
+                fields_found.append(value)
+            elif isinstance(value, dict):
+                results = search(value, field)
+                for result in results:
+                    fields_found.append(result)
+            elif isinstance(value, list):
+                for item in value:
+                    more_results = search(item, field)
+                    for another_result in more_results:
+                        fields_found.append(another_result)
+    elif isinstance(search_dict, list):
+        for item in search_dict:
+            more_results = search(item, field)
+            for another_result in more_results:
+                fields_found.append(another_result)
+
+    return fields_found
+
 def get_basic_metadata(request, file_path):
     user_data_path = os.path.join(ip_data_path, request.user.username)
     vars = environment_variables(request)
     if not vars['selected_ip']:
         return {}
+    selected_ip = vars['selected_ip']
     print(file_path)
-    archive_file_path = os.path.join(user_data_path, vars['selected_ip'].ip_filename)
+    archive_file_path = os.path.join(user_data_path, selected_ip.ip_filename)
     t = tarfile.open(archive_file_path, 'r')
     file_content = read_textfile_from_tar(t, file_path)
     tmp_file_path = "/tmp/%s" % randomword(10)
@@ -739,15 +767,23 @@ def get_basic_metadata(request, file_path):
                 unit_dates.append(pead._first_md_val_ancpath(dao_elm, "unitdate"))
             title = unit_titles[0]
             date = unit_dates[0]
+            events = ""
         elif fnmatch.fnmatch(file_path, metadata_file_pattern_premis):
             # TODO: read PREMIS basic metadata
+            structure = get_ip_structure(request.user.username, selected_ip)
+            logical_view = search(structure, "logical_view_data")
+            events = search(logical_view, "events")
+            res_events = []
+            for event in events:
+                if len(event):
+                    res_events.append(event[0]['type'] + ' ' + event[0]['datetime'] + ' ' + event[0]['linking_agent_id']['value'])
             title = "Title"
             date = "20.09.2017"
 
         md_type = ead_md_type if fnmatch.fnmatch(file_path, metadata_file_pattern_ead)  \
             else premis_md_type if fnmatch.fnmatch(file_path, metadata_file_pattern_premis) else "Other"
 
-        return JsonResponse({'success': True, 'type': md_type, 'title': title, 'date': date, 'file_path': file_path}, status=200)
+        return JsonResponse({'success': True, 'type': md_type, 'title': title, 'date': date, 'events': res_events, 'file_path': file_path}, status=200)
     except Exception as error:
         logger.exception(error)
         return JsonResponse({'success': False, 'error': str(error)}, status=500)
