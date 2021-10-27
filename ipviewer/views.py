@@ -2,6 +2,8 @@ import copy
 import fnmatch
 import logging
 import os
+import sys
+import traceback
 
 import magic
 from django.contrib.auth.decorators import login_required
@@ -260,7 +262,11 @@ def get_metadata_section(div, root_mets, base_dir):
     return node
 
 def get_representation_section(div, root_mets, tarFile, root_mets_file_entry_base_dir):
-    fileSec = next(root_mets.iter('{http://www.loc.gov/METS/}fileSec'))
+    if type(root_mets) == tuple:
+        e = root_mets[0]
+    else:
+        e = root_mets
+    fileSec = next(e.iter('{http://www.loc.gov/METS/}fileSec'))
     label = div.get('LABEL')
     rep_node = {}
     for fptr in div.iter('{http://www.loc.gov/METS/}fptr'):
@@ -421,8 +427,10 @@ def getPremisLinkingAgentId(rep_premis_event):
                 'value': rep_premis_linking_agent_identifier_value.text}
     return None
 
-def openInformationPackage(selected_ip, username):
+def openInformationPackage(request, username):
     user_data_path = os.path.join(ip_data_path, username)
+    vars = environment_variables(request)
+    selected_ip = vars['selected_ip']
     object_path = os.path.join(user_data_path, selected_ip.ip_filename)
     t = tarfile.open(object_path, 'r')
     return t
@@ -445,13 +453,19 @@ def ip_structure(request, tab):
         return {}
     selected_ip = vars['selected_ip']
     template = loader.get_template('ipviewer/ip_structure.html')
-    context = get_ip_structure(request.user.username, selected_ip)
+    context = get_ip_structure(request)
     context["tab"] = tab
     return HttpResponse(template.render(context=context, request=request))
 
-def get_ip_structure(username, selected_ip):
+def get_ip_structure(request):
+    username = request.user.username
+    vars = environment_variables(request)
+    if not vars['selected_ip']:
+        return {}
+    selected_ip = vars['selected_ip']
+
     logical_view_data = []
-    tarFile = openInformationPackage(selected_ip, username)
+    tarFile = openInformationPackage(request, username)
     root_mets, root_mets_file_entry_base_dir = readRootMetsFromIP(tarFile)
     if root_mets is not None:
         # iterate structMap get ids and reference in dmdSec/amdSec/fileSec
@@ -544,7 +558,7 @@ def representations(request, tab):
     template = loader.get_template('ipviewer/representations.html')
     events = {}
 
-    tarFile = openInformationPackage(request)
+    tarFile = openInformationPackage(request, request.user.username)
     root_mets, root_mets_file_entry_base_dir = readRootMetsFromIP(tarFile)
     if root_mets is not None:
         for root_structMap in root_mets.iter('{http://www.loc.gov/METS/}structMap'):
@@ -602,7 +616,8 @@ def representations(request, tab):
         "scale_value": (scale_value * 10),
         "min_dt": min_dtstr,
         "max_dt": max_dtstr,
-        "tab": tab
+        "tab": tab,
+        "demo": bool(request.GET.get('demo'))
     }
     return HttpResponse(template.render(context=context, request=request))
 
@@ -610,24 +625,36 @@ def representations(request, tab):
 def representation_dependency_graph(request):  # noqa
     template = loader.get_template('ipviewer/representations.html')
     events = {}
-
-    tarFile, root_mets_file_entry_base_dir = openInformationPackage(request)
+    vars = environment_variables(request)
+    selected_ip = vars['selected_ip']
+    tarFile = openInformationPackage(request, request.user.username)
     root_mets = readRootMetsFromIP(tarFile)
-    if root_mets is not None:
-        for root_structMap in root_mets.iter('{http://www.loc.gov/METS/}structMap'):
-            if root_structMap.get('TYPE') == 'PHYSICAL':
-                for div in root_structMap.find('{http://www.loc.gov/METS/}div'):
-                    representation = get_representation_section(div, root_mets, tarFile, root_mets_file_entry_base_dir)
-                    if 'nodes' in representation:
-                        for node in representation['nodes']:
-                            if 'metadata' in node['text']:
-                                if 'premis' in node:
-                                    premis = node['premis']
-                                    if 'events' in premis:
-                                        for event in premis['events']:
-                                            events[event['datetime']] = event['type']
 
     # TODO: read migration paths from PREMIS file
+
+    try:
+        if root_mets is not None:
+            root_structs = root_mets[0].iter('{http://www.loc.gov/METS/}structMap')
+            for root_structMap in root_structs:
+                if root_structMap.get('TYPE') == 'PHYSICAL':
+                    for div in root_structMap.find('{http://www.loc.gov/METS/}div'):
+                        mets_info_entries = [member for member in tarFile.getmembers() if
+                                             re.match(mets_entry_pattern, member.name)]
+                        root_mets_file_entry = mets_info_entries[0].name
+                        root_mets_file_entry_base_dir = os.path.dirname(root_mets_file_entry)
+                        representation = get_representation_section(div, root_mets, tarFile, root_mets_file_entry_base_dir)
+                        if 'nodes' in representation:
+                            for node in representation['nodes']:
+                                if 'metadata' in node['text']:
+                                    if 'premis' in node:
+                                        premis = node['premis']
+                                        if 'events' in premis:
+                                            for event in premis['events']:
+                                                events[event['datetime']] = event['type']
+    except Exception as error:
+        print("Error: %s" % str(error))
+
+
     nodes = [
         {"id": 1, "label": "MS Word 2003 XML Document (SIP)", "shape": "box"},
         {"id": 2, "label": "PDF document (ingest)", "shape": "box"},
@@ -751,6 +778,7 @@ def get_basic_metadata(request, file_path):
     t = tarfile.open(archive_file_path, 'r')
     file_content = read_textfile_from_tar(t, file_path)
     tmp_file_path = "/tmp/%s" % randomword(10)
+    res_events = []
     try:
         title = ""
         date = ""
@@ -769,15 +797,13 @@ def get_basic_metadata(request, file_path):
             date = unit_dates[0]
             events = ""
         elif fnmatch.fnmatch(file_path, metadata_file_pattern_premis):
-            # TODO: read PREMIS basic metadata
-            structure = get_ip_structure(request.user.username, selected_ip)
+            structure = get_ip_structure(request)
             logical_view = search(structure, "logical_view_data")
             events = search(logical_view, "events")
-            res_events = []
             for event in events:
                 if len(event):
-                    res_events.append(event[0]['type'] + ' ' + event[0]['datetime'] + ' ' + event[0]['linking_agent_id']['value'])
-            title = "Title"
+                    res_events.append({ 'type': event[0]['type'], 'datetime': event[0]['datetime'], 'agent': event[0]['linking_agent_id']['value']})
+            title = "Root PREMIS"
             date = "20.09.2017"
 
         md_type = ead_md_type if fnmatch.fnmatch(file_path, metadata_file_pattern_ead)  \

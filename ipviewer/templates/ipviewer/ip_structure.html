@@ -94,7 +94,15 @@
                         $('#metadata-type').text(data.type);
                         $('#metadata-title').text("Title: "+data.title);
                         $('#metadata-date').text("Date: "+data.date);
-                        $('#metadata-events').text("Events: "+data.events);
+                        if($(this).text() === 'PREMIS Preservation Metadata')
+                            $('#metadata-events').text("Events: ");
+                        $( ".eventlist" ).empty();
+                        const $ul = $('<ul>', { class: "eventlist" }).append(
+                          data.events.map(event =>
+                            $("<li>").append($("<a>").text(event.agent +" ("+  new Date(event.datetime).toLocaleDateString()  + ")" ))
+                          )
+                        );
+                        $('#metadata-events').append($ul);
                     });
 
                     return false;

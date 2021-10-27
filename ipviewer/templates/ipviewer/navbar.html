@@ -46,7 +46,9 @@
   </a>
   <div class="dropdown-menu" aria-labelledby="navbarDropdown5">
     <a class="dropdown-item" href="{% url 'representations' 1 %}">{% trans 'Timeline view' %}</a>
+    {% if demo %}
     <a class="dropdown-item" href="{% url 'representations' 2 %}">{% trans 'Dependency view' %}</a>
+    {% endif %}
   </div>
 </li>
 

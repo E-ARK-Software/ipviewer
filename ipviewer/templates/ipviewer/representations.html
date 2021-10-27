@@ -43,10 +43,11 @@
   <li class="nav-item">
     <a class="nav-link{% if tab == '1' %} active{% endif %}" data-toggle="tab" href="#tab1">Timeline view</a>
   </li>
+  {% if demo %}
   <li class="nav-item">
     <a class="nav-link{% if tab == '2' %} active{% endif %}" data-toggle="tab" href="#tab2">Dependency view</a>
   </li>
-
+  {% endif %}
 </ul>
 
 <script type="text/javascript" src="{% static 'ipviewer/bstreeview/bstreeview.min.js' %}"></script>
@@ -88,8 +89,8 @@
 
 
   </div>
+  {% if demo %}
   <div class="tab-pane container{% if tab == '2' %} active{% else %} fade{% endif %}" id="tab2">
-
     <script type="text/javascript" src="{% static 'ipviewer/vis.js/vis-network.js' %}"></script>
     <link href="{% static 'ipviewer/vis.js/vis-network.min.css' %}" rel="stylesheet" type="text/css" />
     <script>
@@ -154,6 +155,7 @@
     <div id="entity-relationships" style="border: 1px solid gray"></div>
 
   </div>
+  {% endif %}
 </div>
 
 {% else %}
